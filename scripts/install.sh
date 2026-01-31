@@ -85,16 +85,28 @@ echo "Installing Claude Code CLI..."
 if command -v claude-code &> /dev/null; then
     print_info "Claude Code already installed"
 else
-    sudo npm install -g @anthropic-ai/claude-code
-    print_success "Claude Code CLI installed"
+    # Try without sudo first (works with nvm/user-installed npm)
+    if npm install -g @anthropic-ai/claude-code &> /dev/null; then
+        print_success "Claude Code CLI installed (user-level)"
+    else
+        # Fallback to sudo if user-level install fails
+        print_info "Trying with sudo..."
+        if sudo npm install -g @anthropic-ai/claude-code; then
+            print_success "Claude Code CLI installed (system-level)"
+        else
+            print_error "Claude Code CLI installation failed"
+            print_info "You can install it manually later with: npm install -g @anthropic-ai/claude-code"
+            print_info "Continuing with installation..."
+        fi
+    fi
 fi
 
 # Verify Claude Code installation
-if claude-code --version &> /dev/null; then
+if command -v claude-code &> /dev/null; then
     print_success "Claude Code CLI verified"
 else
-    print_error "Claude Code CLI installation failed"
-    exit 1
+    print_info "Claude Code CLI not found, but continuing installation"
+    print_info "The bot will use OpenRouter fallback if Claude Code is not available"
 fi
 
 # Create Python virtual environment
