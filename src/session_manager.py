@@ -136,6 +136,56 @@ class SessionManager:
         logger.info(f"Created new session {session_id} for user {telegram_id}")
         return session
     
+    def set_work_directory(self, telegram_id: int, custom_path: str) -> Optional[Session]:
+        """
+        Set a custom work directory for a user's session.
+        
+        Args:
+            telegram_id: Telegram user ID
+            custom_path: Custom directory path to use as workspace
+            
+        Returns:
+            Updated Session object if successful, None otherwise
+        """
+        # Validate the directory exists and is accessible
+        custom_dir = Path(custom_path).resolve()
+        if not custom_dir.exists():
+            logger.error(f"Custom directory does not exist: {custom_path}")
+            return None
+        
+        if not custom_dir.is_dir():
+            logger.error(f"Path is not a directory: {custom_path}")
+            return None
+        
+        # Get or create session
+        session = self.get_session(telegram_id)
+        if not session:
+            session = self.create_session(telegram_id)
+        
+        # Create workspace subdirectory in custom path
+        workspace = custom_dir / f"agenticgram_{telegram_id}"
+        workspace.mkdir(parents=True, exist_ok=True)
+        
+        # Update session with new work directory
+        session.work_dir = str(workspace)
+        session.last_used = datetime.now()
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE sessions 
+                SET work_dir = ?, last_used = ?
+                WHERE telegram_id = ?
+            """, (
+                session.work_dir,
+                session.last_used.isoformat(),
+                telegram_id
+            ))
+            conn.commit()
+        
+        logger.info(f"Set custom work directory for user {telegram_id}: {workspace}")
+        return session
+    
     def get_session(self, telegram_id: int) -> Optional[Session]:
         """
         Get existing session for a user.

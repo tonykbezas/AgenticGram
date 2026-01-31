@@ -61,6 +61,12 @@ def load_environment() -> dict:
     env_vars["LOG_LEVEL"] = os.getenv("LOG_LEVEL", "INFO")
     env_vars["LOG_FILE"] = os.getenv("LOG_FILE", "")
     
+    # Directory navigation settings
+    env_vars["BROWSE_START_DIR"] = os.getenv("BROWSE_START_DIR", str(Path.home()))
+    env_vars["ALLOWED_BASE_DIRS"] = os.getenv("ALLOWED_BASE_DIRS", f"{Path.home()},/home,/opt,/srv").split(",")
+    env_vars["BLOCKED_DIRS"] = os.getenv("BLOCKED_DIRS", "/etc,/sys,/proc,/root,/boot,/dev,/run,/tmp").split(",")
+    env_vars["MAX_DIRS_PER_PAGE"] = int(os.getenv("MAX_DIRS_PER_PAGE", "8"))
+    
     # Parse allowed Telegram IDs
     env_vars["ALLOWED_TELEGRAM_IDS"] = [
         int(id.strip()) for id in env_vars["ALLOWED_TELEGRAM_IDS"].split(",")

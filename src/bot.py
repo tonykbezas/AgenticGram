@@ -29,6 +29,7 @@ from .utils import (
 )
 from .session_manager import SessionManager
 from .orchestrator import Orchestrator
+from .directory_browser import DirectoryBrowser
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,17 @@ class AgenticGramBot:
         # Track pending permission requests
         self.pending_permissions: Dict[str, asyncio.Future] = {}
         
+        # Initialize directory browser
+        self.directory_browser = DirectoryBrowser(
+            start_dir=config["BROWSE_START_DIR"],
+            allowed_base_dirs=config["ALLOWED_BASE_DIRS"],
+            blocked_dirs=config["BLOCKED_DIRS"],
+            max_dirs_per_page=config["MAX_DIRS_PER_PAGE"]
+        )
+        
+        # Track user navigation state (current_path per user)
+        self.user_navigation: Dict[int, str] = {}
+        
         # Build application
         self.app = Application.builder().token(config["TELEGRAM_BOT_TOKEN"]).build()
         self._register_handlers()
@@ -75,6 +87,7 @@ class AgenticGramBot:
         self.app.add_handler(CommandHandler("code", self._cmd_code))
         self.app.add_handler(CommandHandler("session", self._cmd_session))
         self.app.add_handler(CommandHandler("status", self._cmd_status))
+        self.app.add_handler(CommandHandler("browse", self._cmd_browse))
         
         # File upload handler
         self.app.add_handler(MessageHandler(filters.Document.ALL, self._handle_file))
@@ -111,6 +124,7 @@ class AgenticGramBot:
             "or fallback to OpenRouter when needed.\n\n"
             "**Available Commands:**\n"
             "/code <instruction> - Execute an AI coding instruction\n"
+            "/browse - Browse and select working directory\n"
             "/session - Manage your session (new/clear/info)\n"
             "/status - Check backend availability\n"
             "/help - Show this help message\n\n"
@@ -133,6 +147,8 @@ class AgenticGramBot:
             "**Commands:**\n"
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
+            "• `/browse [path]` - Browse and select working directory\n"
+            "  Navigate through directories with inline buttons\n\n"
             "• `/session new` - Start a new session\n"
             "• `/session clear` - Clear current session\n"
             "• `/session info` - Show session information\n\n"
@@ -287,6 +303,127 @@ class AgenticGramBot:
         
         await update.message.reply_text(status_message, parse_mode="Markdown")
     
+    async def _cmd_browse(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /browse command to navigate directories."""
+        user_id = update.effective_user.id
+        
+        if not self._check_authorization(user_id):
+            await update.message.reply_text("❌ Unauthorized.")
+            return
+        
+        # Determine starting directory
+        if context.args:
+            start_path = " ".join(context.args)
+        else:
+            start_path = self.directory_browser.start_dir
+        
+        # Validate directory
+        is_safe, error_msg = self.directory_browser.is_safe_directory(str(start_path))
+        if not is_safe:
+            await update.message.reply_text(
+                f"❌ Cannot access directory: {error_msg}\n\n"
+                f"Starting from default: `{self.directory_browser.format_directory_path(str(self.directory_browser.start_dir))}`",
+                parse_mode="Markdown"
+            )
+            start_path = self.directory_browser.start_dir
+        
+        # Store current path for user
+        self.user_navigation[user_id] = str(start_path)
+        
+        # Get directory info and keyboard
+        info = self.directory_browser.get_directory_info(str(start_path))
+        keyboard = self.directory_browser.create_navigation_keyboard(str(start_path))
+        
+        await update.message.reply_text(
+            info + "\n\nSelect a folder to navigate or choose an action:",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        
+        logger.info(f"User {user_id} started browsing from {start_path}")
+    
+    async def _handle_directory_callback(self, query) -> None:
+        """Handle directory navigation callback queries."""
+        user_id = query.from_user.id
+        data = query.data
+        
+        try:
+            # Parse callback data
+            parts = data.split("_", 2)
+            action = parts[1]
+            
+            if action == "cancel":
+                await query.edit_message_text("❌ Directory selection cancelled.")
+                self.user_navigation.pop(user_id, None)
+                return
+            
+            # Decode path from callback data
+            if len(parts) >= 3:
+                if action == "page":
+                    # Format: dir_page_<encoded_path>_<page_num>
+                    path_and_page = parts[2].rsplit("_", 1)
+                    encoded_path = path_and_page[0]
+                    page = int(path_and_page[1])
+                    current_path = self.directory_browser.decode_path(encoded_path)
+                else:
+                    encoded_path = parts[2]
+                    current_path = self.directory_browser.decode_path(encoded_path)
+                    page = 0
+            else:
+                await query.edit_message_text("❌ Invalid navigation data.")
+                return
+            
+            # Validate directory
+            is_safe, error_msg = self.directory_browser.is_safe_directory(current_path)
+            if not is_safe:
+                await query.edit_message_text(f"❌ Cannot access directory: {error_msg}")
+                return
+            
+            # Handle different actions
+            if action == "select":
+                # User selected this directory
+                session = self.session_manager.set_work_directory(user_id, current_path)
+                if session:
+                    await query.edit_message_text(
+                        f"✅ **Working directory set!**\n\n"
+                        f"Selected: `{self.directory_browser.format_directory_path(current_path, 60)}`\n"
+                        f"Workspace: `{session.work_dir}`\n\n"
+                        f"You can now use `/code` commands in this workspace.",
+                        parse_mode="Markdown"
+                    )
+                    logger.info(f"User {user_id} set work directory to {current_path}")
+                else:
+                    await query.edit_message_text("❌ Failed to set working directory.")
+                
+                self.user_navigation.pop(user_id, None)
+                return
+            
+            elif action == "open":
+                # Navigate into subdirectory
+                self.user_navigation[user_id] = current_path
+            
+            elif action == "up":
+                # Navigate to parent directory
+                self.user_navigation[user_id] = current_path
+            
+            elif action == "page":
+                # Change page
+                pass  # current_path and page already set
+            
+            # Update message with new directory view
+            info = self.directory_browser.get_directory_info(current_path)
+            keyboard = self.directory_browser.create_navigation_keyboard(current_path, page)
+            
+            await query.edit_message_text(
+                info + "\n\nSelect a folder to navigate or choose an action:",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+            
+        except Exception as e:
+            logger.error(f"Error handling directory callback: {e}", exc_info=True)
+            await query.edit_message_text(f"❌ Error: {str(e)}")
+    
     async def _handle_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle file uploads."""
         user_id = update.effective_user.id
@@ -375,6 +512,11 @@ class AgenticGramBot:
         """Handle inline keyboard button callbacks."""
         query = update.callback_query
         await query.answer()
+        
+        # Check if it's a directory navigation callback
+        if query.data.startswith("dir_"):
+            await self._handle_directory_callback(query)
+            return
         
         # Parse callback data: "permission_<request_id>_<approve|deny>"
         data_parts = query.data.split("_")
