@@ -1,0 +1,17 @@
+[Unit]
+Description=AgenticGram Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/AgenticGram
+Environment="PATH=/home/pi/AgenticGram/venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/pi/AgenticGram/venv/bin/python -m src.bot
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
