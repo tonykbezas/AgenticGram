@@ -422,17 +422,23 @@ class AgenticGramBot:
                 self.user_navigation.pop(user_id, None)
                 return
             
-            # Decode path from callback data
+            # Decode path from callback data using registry
             if len(parts) >= 3:
                 if action == "page":
-                    # Format: dir_page_<encoded_path>_<page_num>
+                    # Format: dir_page_<path_id>_<page_num>
                     path_and_page = parts[2].rsplit("_", 1)
-                    encoded_path = path_and_page[0]
+                    path_id = path_and_page[0]
                     page = int(path_and_page[1])
-                    current_path = self.directory_browser.decode_path(encoded_path)
+                    current_path = self.directory_browser.get_path(path_id)
+                    if not current_path:
+                        await query.edit_message_text("❌ Navigation session expired. Use /browse to start again.")
+                        return
                 else:
-                    encoded_path = parts[2]
-                    current_path = self.directory_browser.decode_path(encoded_path)
+                    path_id = parts[2]
+                    current_path = self.directory_browser.get_path(path_id)
+                    if not current_path:
+                        await query.edit_message_text("❌ Navigation session expired. Use /browse to start again.")
+                        return
                     page = 0
             else:
                 await query.edit_message_text("❌ Invalid navigation data.")

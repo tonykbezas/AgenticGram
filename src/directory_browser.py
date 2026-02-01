@@ -4,9 +4,10 @@ Provides interactive directory navigation through Telegram inline keyboards.
 """
 
 import os
-import base64
+import secrets
+import time
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
@@ -31,6 +32,10 @@ class DirectoryBrowser:
         """
         self.start_dir = Path(start_dir or Path.home()).resolve()
         self.max_dirs_per_page = max_dirs_per_page
+        
+        # Path registry for short IDs (fixes button_data_invalid error)
+        self._path_registry: Dict[str, Tuple[str, float]] = {}  # {id: (path, timestamp)}
+        self._reverse_registry: Dict[str, str] = {}  # {path: id}
         
         # Default allowed directories
         if allowed_base_dirs is None:
@@ -199,31 +204,92 @@ class DirectoryBrowser:
         except Exception:
             return path
     
+    
+    def register_path(self, path: str) -> str:
+        """
+        Register a path and get a short ID for it.
+        
+        Args:
+            path: Directory path to register
+            
+        Returns:
+            8-character hex ID for the path
+        """
+        # Clean up old entries (older than 1 hour)
+        current_time = time.time()
+        expired_ids = [
+            path_id for path_id, (_, timestamp) in self._path_registry.items()
+            if current_time - timestamp > 3600
+        ]
+        for path_id in expired_ids:
+            old_path = self._path_registry[path_id][0]
+            del self._path_registry[path_id]
+            if old_path in self._reverse_registry:
+                del self._reverse_registry[old_path]
+        
+        # Limit registry size
+        if len(self._path_registry) > 1000:
+            # Remove oldest 100 entries
+            sorted_entries = sorted(
+                self._path_registry.items(),
+                key=lambda x: x[1][1]
+            )
+            for path_id, (old_path, _) in sorted_entries[:100]:
+                del self._path_registry[path_id]
+                if old_path in self._reverse_registry:
+                    del self._reverse_registry[old_path]
+        
+        # Check if path already registered
+        if path in self._reverse_registry:
+            # Update timestamp
+            path_id = self._reverse_registry[path]
+            self._path_registry[path_id] = (path, current_time)
+            return path_id
+        
+        # Generate new ID
+        path_id = secrets.token_hex(4)  # 8 characters
+        while path_id in self._path_registry:
+            path_id = secrets.token_hex(4)
+        
+        # Register
+        self._path_registry[path_id] = (path, current_time)
+        self._reverse_registry[path] = path_id
+        
+        return path_id
+    
+    def get_path(self, path_id: str) -> Optional[str]:
+        """
+        Get path from registry by ID.
+        
+        Args:
+            path_id: 8-character hex ID
+            
+        Returns:
+            Full directory path or None if not found
+        """
+        if path_id in self._path_registry:
+            return self._path_registry[path_id][0]
+        return None
+    
     @staticmethod
     def encode_path(path: str) -> str:
         """
-        Encode path for callback data.
-        
-        Args:
-            path: Directory path
-            
-        Returns:
-            Base64 encoded path
+        Deprecated: Use register_path() instead.
+        Kept for backwards compatibility.
         """
-        return base64.urlsafe_b64encode(path.encode()).decode()
+        # This method is deprecated but kept to avoid breaking existing code
+        # It will be replaced by register_path in create_navigation_keyboard
+        return path
     
     @staticmethod
     def decode_path(encoded: str) -> str:
         """
-        Decode path from callback data.
-        
-        Args:
-            encoded: Base64 encoded path
-            
-        Returns:
-            Decoded directory path
+        Deprecated: Use get_path() instead.
+        Kept for backwards compatibility.
         """
-        return base64.urlsafe_b64decode(encoded.encode()).decode()
+        # This method is deprecated but kept to avoid breaking existing code
+        # It will be replaced by get_path in callback handlers
+        return encoded
     
     def create_navigation_keyboard(
         self,
@@ -257,11 +323,12 @@ class DirectoryBrowser:
                     if len(dir_name) > 20:
                         dir_name = dir_name[:17] + "..."
                     
-                    encoded_path = self.encode_path(str(dir_path))
+                    # Use registry for short IDs
+                    path_id = self.register_path(str(dir_path))
                     row.append(
                         InlineKeyboardButton(
                             f"📁 {dir_name}",
-                            callback_data=f"dir_open_{encoded_path}"
+                            callback_data=f"dir_open_{path_id}"
                         )
                     )
             keyboard.append(row)
@@ -270,19 +337,19 @@ class DirectoryBrowser:
         if has_prev or has_next:
             pagination_row = []
             if has_prev:
-                encoded_path = self.encode_path(current_path)
+                path_id = self.register_path(current_path)
                 pagination_row.append(
                     InlineKeyboardButton(
                         "⬅️ Previous",
-                        callback_data=f"dir_page_{encoded_path}_{page-1}"
+                        callback_data=f"dir_page_{path_id}_{page-1}"
                     )
                 )
             if has_next:
-                encoded_path = self.encode_path(current_path)
+                path_id = self.register_path(current_path)
                 pagination_row.append(
                     InlineKeyboardButton(
                         "➡️ Next",
-                        callback_data=f"dir_page_{encoded_path}_{page+1}"
+                        callback_data=f"dir_page_{path_id}_{page+1}"
                     )
                 )
             keyboard.append(pagination_row)
@@ -293,11 +360,11 @@ class DirectoryBrowser:
         # Go up button
         parent = self.get_parent_directory(current_path)
         if parent:
-            encoded_parent = self.encode_path(parent)
+            parent_id = self.register_path(parent)
             nav_row.append(
                 InlineKeyboardButton(
                     "⬆️ Go Up",
-                    callback_data=f"dir_up_{encoded_parent}"
+                    callback_data=f"dir_up_{parent_id}"
                 )
             )
         
@@ -305,12 +372,12 @@ class DirectoryBrowser:
         
         # Action buttons
         action_row = []
-        encoded_current = self.encode_path(current_path)
+        current_id = self.register_path(current_path)
         
         action_row.append(
             InlineKeyboardButton(
                 "✅ Select This Folder",
-                callback_data=f"dir_select_{encoded_current}"
+                callback_data=f"dir_select_{current_id}"
             )
         )
         action_row.append(
