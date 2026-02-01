@@ -127,7 +127,7 @@ class ClaudeHandler:
                         while True:
                             line = await process.stdout.readline()
                             if not line:  # EOF reached
-                                logger.info(f"Claude CLI output complete. Total lines: {line_count}")
+                                logger.info(f"Claude CLI stdout complete. Total lines: {line_count}")
                                 break
                             
                             line_count += 1
@@ -135,7 +135,7 @@ class ClaudeHandler:
                             output_lines.append(decoded_line)
                             
                             # Log every line at INFO level so you can see progress
-                            logger.info(f"[Line {line_count}] {decoded_line[:150]}")
+                            logger.info(f"[STDOUT Line {line_count}] {decoded_line[:150]}")
                             
                             # Check for permission requests
                             permission_request = self._parse_permission_request(decoded_line)
@@ -161,10 +161,33 @@ class ClaudeHandler:
                                 except Exception as e:
                                     logger.error(f"Error in output callback: {e}")
                     
-                    # Wait for both stdout reading and process completion
+                    async def read_stderr():
+                        """Read stderr to capture error messages."""
+                        if not process.stderr:
+                            logger.warning("No stderr available from Claude CLI process")
+                            return
+                        
+                        logger.info("Started reading Claude CLI errors...")
+                        stderr_line_count = 0
+                        
+                        while True:
+                            line = await process.stderr.readline()
+                            if not line:  # EOF reached
+                                logger.info(f"Claude CLI stderr complete. Total error lines: {stderr_line_count}")
+                                break
+                            
+                            stderr_line_count += 1
+                            decoded_line = line.decode().strip()
+                            error_lines.append(decoded_line)
+                            
+                            # Log stderr immediately - this is critical for debugging
+                            logger.error(f"[STDERR Line {stderr_line_count}] {decoded_line}")
+                    
+                    # Wait for stdout, stderr reading and process completion
                     logger.info("Waiting for Claude CLI process to complete...")
                     await asyncio.gather(
                         read_stdout(),
+                        read_stderr(),
                         process.wait()
                     )
                     logger.info(f"Claude CLI process finished with return code: {process.returncode}")
@@ -186,12 +209,7 @@ class ClaudeHandler:
                     "error": f"Command execution timed out after {timeout} seconds"
                 }
             
-            # Read any remaining stderr
-            if process.stderr:
-                stderr_data = await process.stderr.read()
-                if stderr_data:
-                    error_lines.append(stderr_data.decode().strip())
-            
+            # Stderr is now read concurrently, no need to read again
             output = "\n".join(output_lines)
             error = "\n".join(error_lines)
             
