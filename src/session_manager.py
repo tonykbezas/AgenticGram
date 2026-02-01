@@ -104,7 +104,10 @@ class SessionManager:
         Returns:
             New Session object
         """
-        session_id = f"session_{telegram_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        import uuid
+        
+        # Generate a valid UUID for Claude Code CLI
+        session_id = str(uuid.uuid4())
         work_dir = self.work_dir_base / f"user_{telegram_id}" / session_id
         work_dir.mkdir(parents=True, exist_ok=True)
         
