@@ -51,12 +51,13 @@ fi
 echo ""
 
 echo -e "${BLUE}3. Checking configuration files...${NC}"
-if check_file "config/.env"; then
+# Check for .env in root directory (where load_dotenv() looks by default)
+if check_file ".env"; then
     echo "   Checking .env contents..."
     
     # Check for required variables
-    if grep -q "TELEGRAM_BOT_TOKEN" config/.env; then
-        TOKEN=$(grep "TELEGRAM_BOT_TOKEN" config/.env | cut -d'=' -f2)
+    if grep -q "TELEGRAM_BOT_TOKEN" .env; then
+        TOKEN=$(grep "TELEGRAM_BOT_TOKEN" .env | cut -d'=' -f2)
         if [ "$TOKEN" != "your_bot_token_here" ] && [ -n "$TOKEN" ]; then
             echo -e "   ${GREEN}✓${NC} TELEGRAM_BOT_TOKEN is set"
         else
@@ -64,15 +65,19 @@ if check_file "config/.env"; then
         fi
     fi
     
-    if grep -q "CLAUDE_CODE_PATH" config/.env; then
-        CLAUDE_PATH=$(grep "CLAUDE_CODE_PATH" config/.env | cut -d'=' -f2)
-        echo -e "   ${GREEN}✓${NC} CLAUDE_CODE_PATH is set to: $CLAUDE_PATH"
+    if grep -q "CLAUDE_CODE_PATH" .env; then
+        CLAUDE_PATH=$(grep "CLAUDE_CODE_PATH" .env | cut -d'=' -f2)
+        if [ -n "$CLAUDE_PATH" ]; then
+            echo -e "   ${GREEN}✓${NC} CLAUDE_CODE_PATH is set to: $CLAUDE_PATH"
+        else
+            echo -e "   ${GREEN}✓${NC} CLAUDE_CODE_PATH not set (will use 'claude' from PATH)"
+        fi
     else
-        echo -e "   ${YELLOW}⚠${NC}  CLAUDE_CODE_PATH not set (will use 'claude' from PATH)"
+        echo -e "   ${GREEN}✓${NC} CLAUDE_CODE_PATH not set (will use 'claude' from PATH)"
     fi
     
-    if grep -q "OPENROUTER_API_KEY" config/.env; then
-        OR_KEY=$(grep "OPENROUTER_API_KEY" config/.env | cut -d'=' -f2)
+    if grep -q "OPENROUTER_API_KEY" .env; then
+        OR_KEY=$(grep "OPENROUTER_API_KEY" .env | cut -d'=' -f2)
         if [ "$OR_KEY" != "your_openrouter_key_here" ] && [ -n "$OR_KEY" ]; then
             echo -e "   ${GREEN}✓${NC} OPENROUTER_API_KEY is set (fallback available)"
         else
@@ -80,17 +85,29 @@ if check_file "config/.env"; then
         fi
     fi
 else
-    echo -e "${RED}   Create config/.env from config/.env.example${NC}"
+    echo -e "${RED}✗${NC} .env NOT found in root directory"
+    echo -e "   ${YELLOW}Create .env from config/.env.example:${NC}"
+    echo "   cp config/.env.example .env"
+    echo "   nano .env  # Edit with your tokens"
 fi
 echo ""
 
 echo -e "${BLUE}4. Checking bot process...${NC}"
-if pgrep -f "python.*bot.py" > /dev/null; then
-    echo -e "${GREEN}✓${NC} Bot is running"
+# Check systemd first
+if systemctl is-active --quiet agenticgram 2>/dev/null; then
+    echo -e "${GREEN}✓${NC} Bot is running (systemd service)"
+    echo "   Service: agenticgram"
+    echo "   Status: $(systemctl is-active agenticgram)"
+    echo "   To restart: sudo systemctl restart agenticgram"
+    echo "   To view logs: sudo journalctl -u agenticgram -f"
+elif pgrep -f "python.*bot.py" > /dev/null; then
+    echo -e "${GREEN}✓${NC} Bot is running (manual process)"
     echo "   PID: $(pgrep -f 'python.*bot.py')"
     echo "   Command: $(ps aux | grep 'python.*bot.py' | grep -v grep | awk '{print $11, $12, $13}')"
 else
     echo -e "${YELLOW}⚠${NC}  Bot is NOT running"
+    echo "   Start with: sudo systemctl start agenticgram"
+    echo "   Or manually: python3 -m src.bot"
 fi
 echo ""
 
@@ -164,16 +181,41 @@ if ! command -v claude &> /dev/null; then
     echo ""
 fi
 
-if [ ! -f "config/.env" ]; then
+if [ ! -f ".env" ]; then
     echo -e "${YELLOW}→${NC} Create configuration:"
-    echo "   cp config/.env.example config/.env"
-    echo "   nano config/.env  # Edit with your tokens"
+    echo "   cp config/.env.example .env"
+    echo "   nano .env  # Edit with your tokens"
     echo ""
 fi
 
-if ! pgrep -f "python.*bot.py" > /dev/null; then
+# Check if running as systemd service
+if systemctl is-active --quiet agenticgram 2>/dev/null; then
+    echo -e "${YELLOW}→${NC} Bot is running as systemd service. To apply code changes:"
+    echo "   git pull origin main"
+    echo "   sudo systemctl restart agenticgram"
+    echo "   sudo journalctl -u agenticgram -f  # View logs"
+    echo ""
+elif ! pgrep -f "python.*bot.py" > /dev/null; then
     echo -e "${YELLOW}→${NC} Start the bot:"
-    echo "   python3 -m src.bot"
+    echo "   sudo systemctl start agenticgram  # If using systemd"
+    echo "   python3 -m src.bot  # Or run manually"
+    echo ""
+fi
+
+# Check for timeout errors
+if [ -f "agenticgram.log" ]; then
+    TIMEOUT_COUNT=$(grep -c "Timed out" agenticgram.log 2>/dev/null || echo "0")
+elif systemctl is-active --quiet agenticgram 2>/dev/null; then
+    TIMEOUT_COUNT=$(sudo journalctl -u agenticgram | grep -c "Timed out" 2>/dev/null || echo "0")
+else
+    TIMEOUT_COUNT=0
+fi
+
+if [ "$TIMEOUT_COUNT" -gt 0 ]; then
+    echo -e "${RED}⚠${NC}  Found $TIMEOUT_COUNT timeout errors!"
+    echo "   This was fixed in recent commits. Make sure to:"
+    echo "   1. git pull origin main"
+    echo "   2. sudo systemctl restart agenticgram"
     echo ""
 fi
 
