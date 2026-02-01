@@ -100,7 +100,7 @@ class ClaudeHandler:
                 cwd=work_dir
             )
             
-            logger.info(f"Started Claude Code process for session {session_id}")
+            logger.info(f"Started Claude CLI process with session {session_id} in {work_dir}")
             
             # Handle interactive I/O with permission requests
             output_lines = []

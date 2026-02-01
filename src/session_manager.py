@@ -106,7 +106,7 @@ class SessionManager:
         """
         import uuid
         
-        # Generate a valid UUID for Claude Code CLI
+        # Generate a valid UUID for Claude Code CLI --session-id
         session_id = str(uuid.uuid4())
         work_dir = self.work_dir_base / f"user_{telegram_id}" / session_id
         work_dir.mkdir(parents=True, exist_ok=True)
