@@ -112,43 +112,49 @@ class ClaudeHandler:
             try:
                 # Read output with timeout
                 async with asyncio.timeout(timeout):
-                    while True:
-                        # Read stdout
-                        if process.stdout:
+                    # Create tasks for reading stdout and waiting for process
+                    async def read_stdout():
+                        """Read stdout line by line and handle permissions."""
+                        nonlocal last_callback_time
+                        if not process.stdout:
+                            return
+                        
+                        while True:
                             line = await process.stdout.readline()
-                            if line:
-                                decoded_line = line.decode().strip()
-                                output_lines.append(decoded_line)
-                                logger.debug(f"Claude output: {decoded_line}")
+                            if not line:  # EOF reached
+                                break
+                            
+                            decoded_line = line.decode().strip()
+                            output_lines.append(decoded_line)
+                            logger.debug(f"Claude output: {decoded_line}")
+                            
+                            # Check for permission requests
+                            permission_request = self._parse_permission_request(decoded_line)
+                            if permission_request:
+                                approved = await self._handle_permission_request(permission_request)
                                 
-                                # Check for permission requests
-                                permission_request = self._parse_permission_request(decoded_line)
-                                if permission_request:
-                                    approved = await self._handle_permission_request(permission_request)
-                                    
-                                    # Send response to Claude Code
-                                    if process.stdin:
-                                        response = "y\n" if approved else "n\n"
-                                        process.stdin.write(response.encode())
-                                        await process.stdin.drain()
-                                        logger.info(f"Sent permission response: {response.strip()}")
-                                
-                                # Call streaming callback periodically
-                                import time
-                                current_time = time.time()
-                                if output_callback and (current_time - last_callback_time) >= CALLBACK_INTERVAL:
-                                    try:
-                                        await output_callback("\n".join(output_lines))
-                                        last_callback_time = current_time
-                                    except Exception as e:
-                                        logger.error(f"Error in output callback: {e}")
-                        
-                        # Check if process has finished
-                        if process.returncode is not None:
-                            break
-                        
-                        # Small delay to prevent busy waiting
-                        await asyncio.sleep(0.1)
+                                # Send response to Claude Code
+                                if process.stdin:
+                                    response = "y\n" if approved else "n\n"
+                                    process.stdin.write(response.encode())
+                                    await process.stdin.drain()
+                                    logger.info(f"Sent permission response: {response.strip()}")
+                            
+                            # Call streaming callback periodically
+                            import time
+                            current_time = time.time()
+                            if output_callback and (current_time - last_callback_time) >= CALLBACK_INTERVAL:
+                                try:
+                                    await output_callback("\n".join(output_lines))
+                                    last_callback_time = current_time
+                                except Exception as e:
+                                    logger.error(f"Error in output callback: {e}")
+                    
+                    # Wait for both stdout reading and process completion
+                    await asyncio.gather(
+                        read_stdout(),
+                        process.wait()
+                    )
                 
                 # Final callback with complete output
                 if output_callback and output_lines:
@@ -166,9 +172,6 @@ class ClaudeHandler:
                     "output": "\n".join(output_lines),
                     "error": f"Command execution timed out after {timeout} seconds"
                 }
-            
-            # Wait for process to complete
-            await process.wait()
             
             # Read any remaining stderr
             if process.stderr:
