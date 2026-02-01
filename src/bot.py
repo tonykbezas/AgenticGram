@@ -188,49 +188,104 @@ class AgenticGramBot:
         # Send typing indicator
         await update.message.chat.send_action("typing")
         
+        # Send initial status message
+        status_message = await update.message.reply_text(
+            "🤖 **Claude is working...**\n\n_Waiting for response..._",
+            parse_mode="Markdown"
+        )
+        
         # Execute command
         logger.info(f"Executing code command for user {user_id}: {instruction[:50]}...")
+        
+        # Track streaming state
+        last_output = ""
+        last_edit_time = 0
+        EDIT_COOLDOWN = 1.0  # Minimum 1 second between edits to avoid rate limits
+        
+        async def stream_callback(output: str):
+            nonlocal last_output, last_edit_time
+            
+            # Avoid duplicate updates
+            if output == last_output:
+                return
+            
+            # Rate limiting
+            import time
+            current_time = time.time()
+            if current_time - last_edit_time < EDIT_COOLDOWN:
+                return
+            
+            last_output = output
+            last_edit_time = current_time
+            
+            # Format output with truncation if needed
+            if len(output) > 3500:
+                # Keep last 3500 chars
+                truncated = output[-3500:]
+                formatted = f"🤖 **Claude is working...**\n\n```\n...[truncated]\n\n{truncated}\n```"
+            else:
+                formatted = f"🤖 **Claude is working...**\n\n```\n{output}\n```"
+            
+            try:
+                await status_message.edit_text(
+                    formatted,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                # Silently ignore edit errors (rate limits, unchanged message, etc.)
+                logger.debug(f"Message edit skipped: {e}")
         
         try:
             result = await self.orchestrator.execute_command(
                 instruction=instruction,
                 telegram_id=user_id,
-                chat_id=chat_id
+                chat_id=chat_id,
+                output_callback=stream_callback
             )
             
             if result["success"]:
                 output = result["output"]
                 backend = result.get("backend", "unknown")
                 
-                # Prepare response
-                response = f"✅ **Completed** (via {backend})\n\n"
+                # Prepare final response
+                final_text = f"✅ **Completed** (via {backend})\n\n```\n{output}\n```"
                 
-                # Chunk and send output
-                chunks = sanitize_message(output)
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await update.message.reply_text(
-                            response + f"```\n{chunk}\n```",
-                            parse_mode="Markdown"
-                        )
-                    else:
-                        await update.message.reply_text(
-                            f"```\n{chunk}\n```",
-                            parse_mode="Markdown"
-                        )
+                # Handle long outputs
+                if len(final_text) > 4000:
+                    # Send as file
+                    from io import BytesIO
+                    output_file = BytesIO(output.encode('utf-8'))
+                    output_file.name = "claude_output.txt"
+                    
+                    await update.message.reply_document(
+                        document=output_file,
+                        filename="claude_output.txt",
+                        caption=f"✅ **Completed** (via {backend})\n\n_Output too long, sent as file_",
+                        parse_mode="Markdown"
+                    )
+                    await status_message.delete()
+                else:
+                    # Update final message
+                    await status_message.edit_text(final_text, parse_mode="Markdown")
             else:
                 error = result.get("error", "Unknown error")
-                await update.message.reply_text(
+                await status_message.edit_text(
                     f"❌ **Error:** {error}",
                     parse_mode="Markdown"
                 )
         
         except Exception as e:
             logger.error(f"Error executing code command: {e}", exc_info=True)
-            await update.message.reply_text(
-                f"❌ **Unexpected error:** {str(e)}",
-                parse_mode="Markdown"
-            )
+            try:
+                await status_message.edit_text(
+                    f"❌ **Unexpected error:** {str(e)}",
+                    parse_mode="Markdown"
+                )
+            except:
+                await update.message.reply_text(
+                    f"❌ **Unexpected error:** {str(e)}",
+                    parse_mode="Markdown"
+                )
     
     async def _cmd_session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /session command."""

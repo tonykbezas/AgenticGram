@@ -71,7 +71,8 @@ class ClaudeHandler:
         instruction: str,
         session_id: str,
         work_dir: str,
-        timeout: int = 300
+        output_callback: Optional[Callable[[str], Any]] = None,
+        timeout: int = 1800  # 30 minutes for long tasks
     ) -> Dict[str, Any]:
         """
         Execute a command via Claude Code CLI with interactive permission handling.
@@ -102,9 +103,11 @@ class ClaudeHandler:
             
             logger.info(f"Started Claude CLI process with session {session_id} in {work_dir}")
             
-            # Handle interactive I/O with permission requests
+            # Handle interactive I/O with permission requests and streaming
             output_lines = []
             error_lines = []
+            last_callback_time = 0
+            CALLBACK_INTERVAL = 2.5  # Send update every 2.5 seconds
             
             try:
                 # Read output with timeout
@@ -129,6 +132,16 @@ class ClaudeHandler:
                                         process.stdin.write(response.encode())
                                         await process.stdin.drain()
                                         logger.info(f"Sent permission response: {response.strip()}")
+                                
+                                # Call streaming callback periodically
+                                import time
+                                current_time = time.time()
+                                if output_callback and (current_time - last_callback_time) >= CALLBACK_INTERVAL:
+                                    try:
+                                        await output_callback("\n".join(output_lines))
+                                        last_callback_time = current_time
+                                    except Exception as e:
+                                        logger.error(f"Error in output callback: {e}")
                         
                         # Check if process has finished
                         if process.returncode is not None:
@@ -136,6 +149,13 @@ class ClaudeHandler:
                         
                         # Small delay to prevent busy waiting
                         await asyncio.sleep(0.1)
+                
+                # Final callback with complete output
+                if output_callback and output_lines:
+                    try:
+                        await output_callback("\n".join(output_lines))
+                    except Exception as e:
+                        logger.error(f"Error in final callback: {e}")
                 
             except asyncio.TimeoutError:
                 logger.warning(f"Command timed out after {timeout} seconds")

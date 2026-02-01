@@ -104,6 +104,7 @@ class Orchestrator:
         instruction: str,
         telegram_id: int,
         chat_id: int,
+        output_callback: Optional[Callable] = None,
         force_openrouter: bool = False
     ) -> Dict[str, Any]:
         """
@@ -113,6 +114,7 @@ class Orchestrator:
             instruction: The instruction to execute
             telegram_id: Telegram user ID
             chat_id: Telegram chat ID for permission requests
+            output_callback: Optional callback for streaming output updates
             force_openrouter: Force use of OpenRouter instead of Claude
             
         Returns:
@@ -139,7 +141,8 @@ class Orchestrator:
                 result = await self.claude_handler.execute_command(
                     instruction=instruction,
                     session_id=session.session_id,
-                    work_dir=session.work_dir
+                    work_dir=session.work_dir,
+                    output_callback=output_callback
                 )
                 
                 # Check if we should fallback to OpenRouter
