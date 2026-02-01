@@ -54,6 +54,7 @@ def load_environment() -> dict:
     
     # Optional variables with defaults
     env_vars["OPENROUTER_API_KEY"] = os.getenv("OPENROUTER_API_KEY", "")
+    env_vars["CLAUDE_CODE_PATH"] = os.getenv("CLAUDE_CODE_PATH", "")  # Custom path to Claude CLI
     env_vars["WORK_DIR"] = os.getenv("WORK_DIR", "./workspace")
     env_vars["MAX_SESSION_AGE_HOURS"] = int(os.getenv("MAX_SESSION_AGE_HOURS", "24"))
     env_vars["AUTO_CLEANUP_SESSIONS"] = os.getenv("AUTO_CLEANUP_SESSIONS", "true").lower() == "true"

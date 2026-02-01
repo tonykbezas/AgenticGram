@@ -18,16 +18,20 @@ logger = logging.getLogger(__name__)
 class ClaudeHandler:
     """Handles Claude Code CLI execution and permission management."""
     
-    def __init__(self, permission_callback: Optional[Callable] = None):
+    def __init__(self, permission_callback: Optional[Callable] = None, claude_path: Optional[str] = None):
         """
         Initialize Claude Code handler.
         
         Args:
             permission_callback: Async callback function for permission requests
                                 Signature: async def callback(action_type: str, details: dict) -> bool
+            claude_path: Optional custom path to Claude CLI executable
         """
         self.permission_callback = permission_callback
         self.pending_permissions: Dict[str, asyncio.Future] = {}
+        # Use custom path if provided, otherwise default to 'claude' command
+        self.claude_path = claude_path or "claude"
+        logger.info(f"Claude handler initialized with path: {self.claude_path}")
     
     async def check_availability(self) -> bool:
         """
@@ -37,24 +41,29 @@ class ClaudeHandler:
             True if available, False otherwise
         """
         try:
+            logger.debug(f"Checking Claude CLI availability at: {self.claude_path}")
+            
             process = await asyncio.create_subprocess_exec(
-                "claude-code", "--version",
+                self.claude_path, "--version",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
             
             if process.returncode == 0:
-                logger.info("Claude Code CLI is available")
+                version = stdout.decode().strip()
+                logger.info(f"Claude CLI is available: {version}")
                 return True
             else:
-                logger.warning(f"Claude Code CLI check failed: {stderr.decode()}")
+                error = stderr.decode().strip()
+                logger.warning(f"Claude CLI check failed: {error}")
                 return False
-        except FileNotFoundError:
-            logger.error("Claude Code CLI not found in PATH")
+        except FileNotFoundError as e:
+            logger.error(f"Claude CLI not found at '{self.claude_path}': {e}")
+            logger.error("Hint: Set CLAUDE_CODE_PATH environment variable or ensure 'claude' is in PATH")
             return False
         except Exception as e:
-            logger.error(f"Error checking Claude Code availability: {e}")
+            logger.error(f"Error checking Claude CLI availability: {e}", exc_info=True)
             return False
     
     async def execute_command(
@@ -82,7 +91,7 @@ class ClaudeHandler:
             
             # Start Claude Code process
             process = await asyncio.create_subprocess_exec(
-                "claude-code",
+                self.claude_path,
                 "--session-id", session_id,
                 instruction,
                 stdin=asyncio.subprocess.PIPE,

@@ -22,7 +22,8 @@ class Orchestrator:
     def __init__(
         self,
         session_manager: SessionManager,
-        openrouter_api_key: Optional[str] = None
+        openrouter_api_key: Optional[str] = None,
+        claude_code_path: Optional[str] = None
     ):
         """
         Initialize orchestrator.
@@ -30,9 +31,10 @@ class Orchestrator:
         Args:
             session_manager: SessionManager instance
             openrouter_api_key: Optional OpenRouter API key for fallback
+            claude_code_path: Optional custom path to Claude CLI executable
         """
         self.session_manager = session_manager
-        self.claude_handler = ClaudeHandler()
+        self.claude_handler = ClaudeHandler(claude_path=claude_code_path)
         self.openrouter_handler = OpenRouterHandler(openrouter_api_key) if openrouter_api_key else None
         self.permission_callback: Optional[Callable] = None
         

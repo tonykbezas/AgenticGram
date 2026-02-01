@@ -164,7 +164,15 @@ class SessionManager:
         
         # Create workspace subdirectory in custom path
         workspace = custom_dir / f"agenticgram_{telegram_id}"
-        workspace.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            workspace.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            logger.error(f"Permission denied creating workspace in: {custom_path}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating workspace directory: {e}")
+            return None
         
         # Update session with new work directory
         session.work_dir = str(workspace)

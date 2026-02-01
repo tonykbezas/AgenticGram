@@ -55,7 +55,8 @@ class AgenticGramBot:
         )
         self.orchestrator = Orchestrator(
             session_manager=self.session_manager,
-            openrouter_api_key=config.get("OPENROUTER_API_KEY")
+            openrouter_api_key=config.get("OPENROUTER_API_KEY"),
+            claude_code_path=config.get("CLAUDE_CODE_PATH")
         )
         
         # Set permission callback
@@ -393,7 +394,21 @@ class AgenticGramBot:
                     )
                     logger.info(f"User {user_id} set work directory to {current_path}")
                 else:
-                    await query.edit_message_text("❌ Failed to set working directory.")
+                    # Failed to set directory - likely permission issue
+                    await query.edit_message_text(
+                        f"❌ **Failed to set working directory**\n\n"
+                        f"The bot doesn't have write permissions in:\n"
+                        f"`{self.directory_browser.format_directory_path(current_path, 60)}`\n\n"
+                        f"**Solutions:**\n"
+                        f"1. Choose a different directory with write access\n"
+                        f"2. Grant permissions:\n"
+                        f"   `chmod -R 755 {current_path}`\n"
+                        f"   or\n"
+                        f"   `sudo chown -R $USER:$USER {current_path}`\n\n"
+                        f"Use `/browse` to try again.",
+                        parse_mode="Markdown"
+                    )
+                    logger.error(f"User {user_id} failed to set work directory: {current_path}")
                 
                 self.user_navigation.pop(user_id, None)
                 return

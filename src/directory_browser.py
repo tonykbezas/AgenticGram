@@ -102,6 +102,10 @@ class DirectoryBrowser:
             if not os.access(resolved_path, os.R_OK):
                 return False, "No read permission"
             
+            # Check write permissions (needed to create workspace)
+            if not os.access(resolved_path, os.W_OK):
+                return False, "No write permission (needed to create workspace)"
+            
             return True, ""
             
         except Exception as e:
