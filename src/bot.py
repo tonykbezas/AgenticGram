@@ -200,23 +200,31 @@ class AgenticGramBot:
         # Track streaming state
         last_output = ""
         last_edit_time = 0
-        EDIT_COOLDOWN = 1.0  # Minimum 1 second between edits to avoid rate limits
+        update_count = 0
+        EDIT_COOLDOWN = 0.5  # Minimum 0.5 seconds between edits for responsive updates
         
         async def stream_callback(output: str):
-            nonlocal last_output, last_edit_time
+            nonlocal last_output, last_edit_time, update_count
             
             # Avoid duplicate updates
             if output == last_output:
+                logger.debug("Stream callback: skipped (duplicate output)")
                 return
             
             # Rate limiting
             import time
             current_time = time.time()
             if current_time - last_edit_time < EDIT_COOLDOWN:
+                logger.debug(f"Stream callback: skipped (cooldown, {current_time - last_edit_time:.2f}s since last)")
                 return
             
+            update_count += 1
             last_output = output
             last_edit_time = current_time
+            
+            # Log streaming update
+            output_preview = output[:100].replace('\n', ' ') if output else "(empty)"
+            logger.info(f"Stream update #{update_count}: {output_preview}...")
             
             # Format output with truncation if needed
             if len(output) > 3500:
@@ -231,9 +239,10 @@ class AgenticGramBot:
                     formatted,
                     parse_mode="Markdown"
                 )
+                logger.debug(f"Stream update #{update_count} sent to Telegram successfully")
             except Exception as e:
-                # Silently ignore edit errors (rate limits, unchanged message, etc.)
-                logger.debug(f"Message edit skipped: {e}")
+                # Log edit errors for debugging
+                logger.warning(f"Message edit failed (update #{update_count}): {e}")
         
         try:
             result = await self.orchestrator.execute_command(

@@ -113,24 +113,34 @@ class ClaudeHandler:
                 # Read output with timeout
                 async with asyncio.timeout(timeout):
                     # Create tasks for reading stdout and waiting for process
+                    line_count = 0
+                    
                     async def read_stdout():
                         """Read stdout line by line and handle permissions."""
-                        nonlocal last_callback_time
+                        nonlocal last_callback_time, line_count
                         if not process.stdout:
+                            logger.warning("No stdout available from Claude CLI process")
                             return
+                        
+                        logger.info("Started reading Claude CLI output...")
                         
                         while True:
                             line = await process.stdout.readline()
                             if not line:  # EOF reached
+                                logger.info(f"Claude CLI output complete. Total lines: {line_count}")
                                 break
                             
+                            line_count += 1
                             decoded_line = line.decode().strip()
                             output_lines.append(decoded_line)
-                            logger.debug(f"Claude output: {decoded_line}")
+                            
+                            # Log every line at INFO level so you can see progress
+                            logger.info(f"[Line {line_count}] {decoded_line[:150]}")
                             
                             # Check for permission requests
                             permission_request = self._parse_permission_request(decoded_line)
                             if permission_request:
+                                logger.warning(f"Permission request detected: {permission_request['action_type']}")
                                 approved = await self._handle_permission_request(permission_request)
                                 
                                 # Send response to Claude Code
@@ -144,6 +154,7 @@ class ClaudeHandler:
                             import time
                             current_time = time.time()
                             if output_callback and (current_time - last_callback_time) >= CALLBACK_INTERVAL:
+                                logger.info(f"Triggering stream callback with {len(output_lines)} lines...")
                                 try:
                                     await output_callback("\n".join(output_lines))
                                     last_callback_time = current_time
@@ -151,10 +162,12 @@ class ClaudeHandler:
                                     logger.error(f"Error in output callback: {e}")
                     
                     # Wait for both stdout reading and process completion
+                    logger.info("Waiting for Claude CLI process to complete...")
                     await asyncio.gather(
                         read_stdout(),
                         process.wait()
                     )
+                    logger.info(f"Claude CLI process finished with return code: {process.returncode}")
                 
                 # Final callback with complete output
                 if output_callback and output_lines:
