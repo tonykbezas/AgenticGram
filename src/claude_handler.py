@@ -90,9 +90,10 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
-            # Start Claude Code process
+            # Start Claude Code process with permissions flag to avoid interactive prompts
             process = await asyncio.create_subprocess_exec(
                 self.claude_path,
+                "--dangerously-skip-permissions",  # Skip interactive permission prompts
                 "--session-id", session_id,
                 instruction,
                 stdin=asyncio.subprocess.PIPE,
