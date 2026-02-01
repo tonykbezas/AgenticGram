@@ -188,6 +188,9 @@ class AgenticGramBot:
         # Send typing indicator
         await update.message.chat.send_action("typing")
         
+        # Set current chat_id for permission requests
+        self.current_chat_id = update.effective_chat.id
+        
         # Send initial status message
         status_message = await update.message.reply_text(
             "🤖 **Claude is working...**\n\n_Waiting for response..._",
@@ -571,24 +574,80 @@ class AgenticGramBot:
             True if approved, False if denied
         """
         # Generate unique request ID
-        request_id = str(uuid.uuid4())
+        request_id = str(uuid.uuid4())[:8]  # Short ID for callback data
         
         # Create future for async response
         future = asyncio.Future()
         self.pending_permissions[request_id] = future
         
-        # This would need to be sent to the appropriate chat
-        # For now, we'll implement a simplified version
-        # In production, you'd need to track which chat_id is associated with the current command
+        # Get current chat_id (set by _cmd_code before executing)
+        chat_id = getattr(self, 'current_chat_id', None)
+        if not chat_id:
+            logger.error("No chat_id available for permission request")
+            return False
         
         try:
+            # Format permission message
+            description = details.get('description', 'Unknown action')
+            
+            # Create message based on action type
+            if action_type == "interactive_prompt":
+                # This is a yes/no question from Claude
+                message = f"🔐 **Claude is asking:**\n\n{description}\n\n**Please respond:**"
+            elif action_type == "directory_access":
+                target = details.get('target', 'unknown directory')
+                message = f"🔐 **Permission Required**\n\nClaude wants to access:\n`{target}`\n\n**Allow access?**"
+            elif action_type == "file_edit":
+                target = details.get('target', 'unknown file')
+                message = f"🔐 **Permission Required**\n\nClaude wants to edit:\n`{target}`\n\n**Allow this action?**"
+            elif action_type == "command_exec":
+                target = details.get('target', 'unknown command')
+                message = f"🔐 **Permission Required**\n\nClaude wants to run:\n`{target}`\n\n**Allow this command?**"
+            else:
+                message = f"🔐 **Permission Required**\n\n{description}\n\n**Approve?**"
+            
+            # Create inline keyboard with Yes/No buttons
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                    InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Send permission request to user
+            await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+            
+            logger.info(f"Sent permission request {request_id} to chat {chat_id}")
+            
             # Wait for user response with timeout
             async with asyncio.timeout(self.permission_timeout):
                 approved = await future
+                logger.info(f"Permission request {request_id} {'approved' if approved else 'denied'}")
                 return approved
+                
         except asyncio.TimeoutError:
             logger.warning(f"Permission request {request_id} timed out")
+            # Send timeout message
+            try:
+                await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text="⏱️ Permission request timed out. Denied by default.",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
             return False
+            
+        except Exception as e:
+            logger.error(f"Error handling permission request: {e}", exc_info=True)
+            return False
+            
         finally:
             # Clean up
             self.pending_permissions.pop(request_id, None)
@@ -603,6 +662,12 @@ class AgenticGramBot:
             await self._handle_directory_callback(query)
             return
         
+        # Check if it's a permission callback
+        if query.data.startswith("perm_"):
+            await self._handle_permission_callback(query)
+            return
+        
+        # Legacy permission callback format (keeping for backwards compatibility)
         # Parse callback data: "permission_<request_id>_<approve|deny>"
         data_parts = query.data.split("_")
         if len(data_parts) != 3 or data_parts[0] != "permission":
@@ -626,6 +691,34 @@ class AgenticGramBot:
         result_text = "✅ Approved" if approved else "❌ Denied"
         await query.edit_message_text(
             f"{query.message.text}\n\n**Decision:** {result_text}"
+        )
+    
+    async def _handle_permission_callback(self, query) -> None:
+        """Handle permission button callbacks."""
+        # Parse: perm_<request_id>_<yes|no>
+        parts = query.data.split("_")
+        if len(parts) != 3:
+            await query.edit_message_text("❌ Invalid permission data")
+            return
+        
+        request_id = parts[1]
+        action = parts[2]  # "yes" or "no"
+        
+        # Get pending permission future
+        future = self.pending_permissions.get(request_id)
+        if not future:
+            await query.edit_message_text("⏱️ This permission request has expired.")
+            return
+        
+        # Set result
+        approved = (action == "yes")
+        future.set_result(approved)
+        
+        # Update message
+        result_text = "✅ Approved" if approved else "❌ Denied"
+        await query.edit_message_text(
+            f"{query.message.text}\n\n**Decision:** {result_text}",
+            parse_mode="Markdown"
         )
     
     async def run(self) -> None:

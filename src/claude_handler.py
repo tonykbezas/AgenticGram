@@ -90,10 +90,9 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
-            # Start Claude Code process with permissions flag to avoid interactive prompts
+            # Start Claude Code process (interactive permissions enabled)
             process = await asyncio.create_subprocess_exec(
                 self.claude_path,
-                "--dangerously-skip-permissions",  # Skip interactive permission prompts
                 "--session-id", session_id,
                 instruction,
                 stdin=asyncio.subprocess.PIPE,
@@ -246,14 +245,37 @@ class ClaudeHandler:
         Returns:
             Dictionary with permission details if detected, None otherwise
         """
-        # Common permission patterns from Claude Code
-        patterns = [
-            (r"(?:Edit|Modify|Create|Delete)\s+(?:file|directory):\s*(.+)", "file_edit"),
-            (r"(?:Run|Execute)\s+command:\s*(.+)", "command_exec"),
-            (r"(?:Install|Add)\s+(?:package|dependency):\s*(.+)", "package_install"),
+        # Detect interactive yes/no prompts (most common from Claude)
+        # Patterns like: "Allow access to /path? (y/n)", "Do you want to proceed? (yes/no)"
+        interactive_patterns = [
+            r'\(y/n\)',
+            r'\(yes/no\)',
+            r'\[y/N\]',
+            r'\[Y/n\]',
+            r'\(y/N\)',
+            r'\(Y/n\)',
         ]
         
-        for pattern, action_type in patterns:
+        for pattern in interactive_patterns:
+            if re.search(pattern, line, re.IGNORECASE):
+                # This is an interactive prompt
+                return {
+                    "action_type": "interactive_prompt",
+                    "details": {
+                        "description": line.strip(),
+                        "prompt_type": "yes_no"
+                    }
+                }
+        
+        # Detect specific permission patterns
+        permission_patterns = [
+            (r'(?:Allow|Grant|Trust|Permit)\s+(?:access to|directory|path):\s*(.+)', "directory_access"),
+            (r'(?:Edit|Modify|Create|Delete)\s+(?:file|directory):\s*(.+)', "file_edit"),
+            (r'(?:Run|Execute)\s+command:\s*(.+)', "command_exec"),
+            (r'(?:Install|Add)\s+(?:package|dependency):\s*(.+)', "package_install"),
+        ]
+        
+        for pattern, action_type in permission_patterns:
             match = re.search(pattern, line, re.IGNORECASE)
             if match:
                 return {
@@ -264,14 +286,17 @@ class ClaudeHandler:
                     }
                 }
         
-        # Generic permission request detection
-        if any(keyword in line.lower() for keyword in ["approve", "confirm", "allow", "permit", "(y/n)"]):
-            return {
-                "action_type": "generic",
-                "details": {
-                    "description": line
+        # Generic permission request detection (fallback)
+        permission_keywords = ["approve", "confirm", "allow", "permit", "trust", "authorize"]
+        if any(keyword in line.lower() for keyword in permission_keywords):
+            # Check if it looks like a question
+            if "?" in line or line.strip().endswith(":"):
+                return {
+                    "action_type": "generic",
+                    "details": {
+                        "description": line.strip()
+                    }
                 }
-            }
         
         return None
     
