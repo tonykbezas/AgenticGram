@@ -37,6 +37,9 @@ class ClaudeHandler:
         # Initialize PTY handler
         self.pty_handler = PTYHandler()
         
+        # Session locks to prevent concurrent execution
+        self.session_locks: Dict[str, asyncio.Lock] = {}
+        
         logger.info(f"Claude handler initialized with path: {self.claude_path}")
     
     async def check_availability(self) -> bool:
@@ -97,27 +100,35 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
-            # Generate unique session ID for this command to avoid conflicts
-            # Claude CLI doesn't allow multiple processes with same session ID
-            unique_session_id = f"{session_id}-{uuid.uuid4().hex[:8]}"
+            # Get or create lock for this session
+            if session_id not in self.session_locks:
+                self.session_locks[session_id] = asyncio.Lock()
             
-            # Build command
-            command = [
-                self.claude_path,
-                "--session-id", unique_session_id,
-                instruction
-            ]
+            session_lock = self.session_locks[session_id]
             
-            logger.info(f"Executing Claude CLI with PTY (session: {unique_session_id})")
-            
-            # Execute with PTY
-            result = await self.pty_handler.execute_with_pty(
-                command=command,
-                cwd=work_dir,
-                prompt_callback=self._handle_interactive_prompt,
-                output_callback=output_callback,
-                timeout=timeout
-            )
+            # Acquire lock to ensure only one command runs per session at a time
+            async with session_lock:
+                logger.info(f"Acquired session lock for {session_id}")
+                
+                # Build command with original session ID (maintains context)
+                command = [
+                    self.claude_path,
+                    "--session-id", session_id,
+                    instruction
+                ]
+                
+                logger.info(f"Executing Claude CLI with PTY (session: {session_id})")
+                
+                # Execute with PTY
+                result = await self.pty_handler.execute_with_pty(
+                    command=command,
+                    cwd=work_dir,
+                    prompt_callback=self._handle_interactive_prompt,
+                    output_callback=output_callback,
+                    timeout=timeout
+                )
+                
+                logger.info(f"Released session lock for {session_id}")
             
             if result["success"]:
                 logger.info(f"Command completed successfully for session {session_id}")
