@@ -16,8 +16,11 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
+    ContextTypes,
     filters
 )
+from telegram.request import HTTPXRequest
+from telegram.error import TimedOut
 
 from .utils import (
     setup_logging,
@@ -77,8 +80,18 @@ class AgenticGramBot:
         # Track user navigation state (current_path per user)
         self.user_navigation: Dict[int, str] = {}
         
+        # Database/State initialization would go here
+        
+        # Configure request timeouts
+        request = HTTPXRequest(
+            connect_timeout=20.0,
+            read_timeout=20.0,
+            write_timeout=20.0,
+            pool_timeout=20.0,
+        )
+        
         # Build application
-        self.app = Application.builder().token(config["TELEGRAM_BOT_TOKEN"]).build()
+        self.app = Application.builder().token(config["TELEGRAM_BOT_TOKEN"]).request(request).build()
         self._register_handlers()
     
     def _register_handlers(self) -> None:
@@ -759,14 +772,32 @@ class AgenticGramBot:
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Send permission request to user
-            await self.app.bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
+            # Send permission request to user with retries
+            max_retries = 3
+            sent_message = None
             
+            for attempt in range(max_retries):
+                try:
+                    sent_message = await self.app.bot.send_message(
+                        chat_id=chat_id,
+                        text=message,
+                        reply_markup=reply_markup,
+                        parse_mode="Markdown"
+                    )
+                    break # Success!
+                except TimedOut:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to send permission request {request_id} after {max_retries} attempts due to timeout")
+                        return False
+                    logger.warning(f"Timeout sending permission request {request_id}, retrying ({attempt + 1}/{max_retries})...")
+                    await asyncio.sleep(1) # Wait a bit before retrying
+                except Exception as e:
+                    logger.error(f"Error sending permission request: {e}")
+                    return False
+            
+            if not sent_message:
+                return False
+
             logger.info(f"Sent permission request {request_id} to chat {chat_id}")
             
             # Wait for user response with timeout
