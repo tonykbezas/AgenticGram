@@ -223,46 +223,78 @@ class AgenticGramBot:
         update_count = 0
         EDIT_COOLDOWN = 0.5  # Minimum 0.5 seconds between edits for responsive updates
         
+        # Initialize thinking state
+        self.thinking_msg_id = None
+        self.last_thinking_time = 0
+        self.Thinking_chars = set("✢*✶✻✽·●")
+        
         async def stream_callback(output: str):
             nonlocal last_output, last_edit_time, update_count
             
-            # Avoid duplicate updates
-            if output == last_output:
-                logger.debug("Stream callback: skipped (duplicate output)")
+            if not output:
                 return
-            
-            # Rate limiting
-            import time
-            current_time = time.time()
-            if current_time - last_edit_time < EDIT_COOLDOWN:
-                logger.debug(f"Stream callback: skipped (cooldown, {current_time - last_edit_time:.2f}s since last)")
-                return
-            
-            update_count += 1
-            last_output = output
-            last_edit_time = current_time
-            
-            # Log streaming update
-            output_preview = output[:100].replace('\n', ' ') if output else "(empty)"
-            logger.info(f"Stream update #{update_count}: {output_preview}...")
-            
-            # Format output with truncation if needed
-            if len(output) > 3500:
-                # Keep last 3500 chars
-                truncated = output[-3500:]
-                formatted = f"🤖 **Claude is working...**\n\n```\n...[truncated]\n\n{truncated}\n```"
-            else:
-                formatted = f"🤖 **Claude is working...**\n\n```\n{output}\n```"
-            
+
             try:
-                await status_message.edit_text(
-                    formatted,
-                    parse_mode="Markdown"
-                )
-                logger.debug(f"Stream update #{update_count} sent to Telegram successfully")
+                # Check for "thinking" animation frames
+                clean_text = output.strip()
+                if 0 < len(clean_text) <= 3 and all(c in self.Thinking_chars for c in clean_text):
+                    current_time = asyncio.get_running_loop().time()
+                    # Throttle animation updates (max 1 per 1.5s)
+                    if current_time - self.last_thinking_time >= 1.5:
+                        spinner = clean_text[0] # Take first char
+                        try:
+                            # Use status_message directly if it's the one we're updating
+                            await status_message.edit_text(
+                                f"🤖 **Claude is thinking...** {spinner}",
+                                parse_mode="Markdown"
+                            )
+                            self.last_thinking_time = current_time
+                        except Exception:
+                            pass # Ignore animation errors
+                    return # Stop processing this chunk
+
+                # If we have real text, proceed with normal update
+                
+                # Avoid duplicate updates
+                if output == last_output:
+                    return
+                
+                # Rate limiting
+                import time
+                current_time = time.time()
+                if current_time - last_edit_time < EDIT_COOLDOWN:
+                    return
+                
+                update_count += 1
+                last_output = output
+                last_edit_time = current_time
+                
+                # Log streaming update (throttle logging)
+                if update_count % 10 == 0:
+                   logger.info(f"Stream update #{update_count}")
+                
+                # Format output with truncation if needed
+                # Escape markdown in output to prevent errors
+                escaped_output = escape_markdown(output)
+                
+                if len(output) > 3500:
+                    # Keep last 3500 chars (approx)
+                    truncated = escaped_output[-3500:]
+                    formatted = f"🤖 **Claude is working...**\n\n```\n...[truncated]\n\n{truncated}\n```"
+                else:
+                    formatted = f"🤖 **Claude is working...**\n\n```\n{escaped_output}\n```"
+                
+                try:
+                    await status_message.edit_text(
+                        formatted,
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    # Log edit errors for debugging
+                    logger.debug(f"Message edit failed: {e}")
+            
             except Exception as e:
-                # Log edit errors for debugging
-                logger.warning(f"Message edit failed (update #{update_count}): {e}")
+                logger.error(f"Error in stream callback: {e}")
         
         try:
             result = await self.orchestrator.execute_command(
