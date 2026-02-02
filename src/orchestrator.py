@@ -140,7 +140,6 @@ class Orchestrator:
                 logger.info("Using Claude Code CLI")
                 result = await self.claude_handler.execute_command(
                     instruction=instruction,
-                    session_id=session.session_id,
                     work_dir=session.work_dir,
                     output_callback=output_callback
                 )
