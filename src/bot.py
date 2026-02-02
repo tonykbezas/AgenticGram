@@ -234,9 +234,6 @@ class AgenticGramBot:
             if not output:
                 return
 
-            if not output:
-                return
-
             try:
                 # 1. Clean output body (remove the "infinite spaces" and spinner history)
                 # Remove lines that look like they are just spinner characters
