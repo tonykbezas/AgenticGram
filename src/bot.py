@@ -19,13 +19,11 @@ from telegram.ext import (
     filters
 )
 
-from .utils import (
-    setup_logging,
-    load_environment,
     validate_file_type,
     sanitize_message,
     format_file_size,
-    ensure_directory
+    ensure_directory,
+    escape_markdown
 )
 from .session_manager import SessionManager
 from .orchestrator import Orchestrator
@@ -674,7 +672,9 @@ class AgenticGramBot:
         
         try:
             # Format permission message
-            description = details.get('description', 'Unknown action')
+            # Escape markdown in description to prevent parsing errors
+            raw_description = details.get('description', 'Unknown action')
+            description = escape_markdown(raw_description)
             
             # Create message based on action type
             if action_type == "menu_prompt":
@@ -710,7 +710,7 @@ class AgenticGramBot:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
             elif action_type == "directory_access":
-                target = details.get('target', 'unknown directory')
+                target = escape_markdown(details.get('target', 'unknown directory'))
                 message = f"🔐 **Permission Required**\n\nClaude wants to access:\n`{target}`\n\n**Allow access?**"
                 # Create inline keyboard with Yes/No buttons
                 keyboard = [
@@ -722,7 +722,7 @@ class AgenticGramBot:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
             elif action_type == "file_edit":
-                target = details.get('target', 'unknown file')
+                target = escape_markdown(details.get('target', 'unknown file'))
                 message = f"🔐 **Permission Required**\n\nClaude wants to edit:\n`{target}`\n\n**Allow this action?**"
                 # Create inline keyboard with Yes/No buttons
                 keyboard = [
@@ -734,7 +734,7 @@ class AgenticGramBot:
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
             elif action_type == "command_exec":
-                target = details.get('target', 'unknown command')
+                target = escape_markdown(details.get('target', 'unknown command'))
                 message = f"🔐 **Permission Required**\n\nClaude wants to run:\n`{target}`\n\n**Allow this command?**"
                 # Create inline keyboard with Yes/No buttons
                 keyboard = [
