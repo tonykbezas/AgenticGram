@@ -172,8 +172,8 @@ class PTYHandler:
                         
                         last_output_time = time.time()
                         
-                        # Log output
-                        logger.debug(f"PTY output: {clean_text[:100]}")
+                        # Log output (show actual text, not blob)
+                        logger.info(f"PTY output ({len(clean_text)} chars): {clean_text[:200]}")
                         
                     except OSError as e:
                         logger.error(f"Error reading from PTY: {e}")
@@ -239,6 +239,19 @@ class PTYHandler:
             # Check return code
             returncode = process.wait(timeout=5)
             success = (returncode == 0)
+            
+            # Log final output
+            logger.info(f"Command finished with return code {returncode}")
+            logger.info(f"Final output ({len(clean_output)} chars): {clean_output[:500]}")
+            
+            # If failed, include output in error field
+            if not success:
+                return {
+                    "success": False,
+                    "output": clean_output,
+                    "error": clean_output or f"Command failed with return code {returncode}",
+                    "returncode": returncode
+                }
             
             return {
                 "success": success,
