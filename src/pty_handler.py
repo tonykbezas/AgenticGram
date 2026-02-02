@@ -95,6 +95,10 @@ class PTYHandler:
         # Remove "blob data" markers from logs if they leaked into output
         text = re.sub(r'\[\d+B blob data\]', '', text)
         
+        # Remove lines that are just spinner characters
+        # Claude uses: ✢ * ✶ ✻ ✽ · ●
+        text = re.sub(r'^\s*[✢*✶✻✽·●]\s*$', '', text, flags=re.MULTILINE)
+        
         # Remove multiple empty lines specifically caused by TUI cleanup
         text = re.sub(r'\n{3,}', '\n\n', text)
         

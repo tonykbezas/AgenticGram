@@ -24,6 +24,10 @@ class PTYHandler:
         text = re.sub(r'╭─── Claude Code.*?─╮', '', text, flags=re.DOTALL)
         text = re.sub(r'^\s*│\s*$', '', text, flags=re.MULTILINE)
         text = re.sub(r'\[\d+B blob data\]', '', text)
+        
+        # Remove lines that are just spinner characters
+        text = re.sub(r'^\s*[✢*✶✻✽·●]\s*$', '', text, flags=re.MULTILINE)
+        
         text = re.sub(r'\n{3,}', '\n\n', text)
         return text
 
@@ -47,6 +51,16 @@ class TestTUIFiltering(unittest.TestCase):
         self.assertIn("More Content", cleaned)
         # Check excessive newlines are gone
         self.assertTrue(cleaned.count('\n') < 4) 
+
+    def test_spinner_removal(self):
+        handler = PTYHandler()
+        text = "Start\n✢\n*\n✶\nEnd"
+        cleaned = handler._clean_tui_artifacts(text)
+        self.assertNotIn("✢", cleaned)
+        self.assertNotIn("*", cleaned)
+        self.assertNotIn("✶", cleaned)
+        self.assertIn("Start", cleaned)
+        self.assertIn("End", cleaned) 
 
 if __name__ == "__main__":
     unittest.main()
