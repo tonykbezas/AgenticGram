@@ -29,10 +29,19 @@ class PTYHandler:
             "❯",  # Arrow indicator (common in TUI menus)
             "Enter to confirm",
             "Esc to cancel",
+            "Tab to amend",
             "(y/n)",
             "(yes/no)",
             "[Y/n]",
             "[y/N]",
+        ]
+        
+        # Animation patterns (loading spinners, progress indicators)
+        self.animation_patterns = [
+            r'[✻✶*✢·●✽⠂⠐⠁⠈⠄⠠⠀]+',  # Spinning stars/dots
+            r'reading \d+ files?…',  # Progress messages
+            r'\(ctrl\+o to expand\)',  # UI hints
+            r'ought for\d+s\)',  # Timing info
         ]
     
     def strip_ansi(self, text: str) -> str:
@@ -46,6 +55,59 @@ class PTYHandler:
             Clean text without ANSI codes
         """
         return self.ansi_escape.sub('', text)
+    
+    def _is_animation_frame(self, text: str) -> bool:
+        """
+        Detect if text is just an animation frame (loading spinner, etc.).
+        
+        Args:
+            text: Text to check
+            
+        Returns:
+            True if text appears to be an animation frame
+        """
+        if not text or len(text.strip()) < 3:
+            return True
+        
+        # Check for animation patterns
+        for pattern in self.animation_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        # Check if mostly special characters (animation)
+        clean = re.sub(r'[\s\n\r]', '', text)
+        if len(clean) > 0:
+            special_chars = len(re.findall(r'[✻✶*✢·●✽⠂⠐⠁⠈⠄⠠]', clean))
+            if special_chars / len(clean) > 0.5:  # More than 50% animation chars
+                return True
+        
+        return False
+    
+    def _extract_menu_options(self, text: str) -> Optional[list]:
+        """
+        Extract menu options from prompt text.
+        
+        Args:
+            text: Prompt text containing menu
+            
+        Returns:
+            List of option dicts with 'number' and 'text', or None
+        """
+        lines = text.strip().split('\n')
+        options = []
+        
+        for line in lines:
+            # Match patterns like "❯ 1. Yes" or "   2. No"
+            match = re.match(r'^\s*[❯\s]*\s*(\d+)\.\s+(.+?)\s*$', line)
+            if match:
+                number = match.group(1)
+                text = match.group(2).strip()
+                options.append({
+                    'number': number,
+                    'text': text
+                })
+        
+        return options if options else None
     
     def _is_prompt(self, text: str, idle_time: float) -> bool:
         """
@@ -201,15 +263,19 @@ class PTYHandler:
                         except Exception as e:
                             logger.error(f"Error in prompt callback: {e}", exc_info=True)
                 
-                # Stream output callback
+                # Stream output callback (skip animation frames)
                 if output_callback and clean_output:
                     current_time = time.time()
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
-                        try:
-                            await output_callback(clean_output)
-                            last_callback_time = current_time
-                        except Exception as e:
-                            logger.error(f"Error in output callback: {e}")
+                        # Only send if it's not just an animation frame
+                        if not self._is_animation_frame(clean_output):
+                            try:
+                                await output_callback(clean_output)
+                                last_callback_time = current_time
+                            except Exception as e:
+                                logger.error(f"Error in output callback: {e}")
+                        else:
+                            logger.debug("Skipping animation frame")
                 
                 # Small sleep to avoid busy waiting
                 await asyncio.sleep(0.05)

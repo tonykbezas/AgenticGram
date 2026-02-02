@@ -190,16 +190,36 @@ class ClaudeHandler:
         
         # Check for numbered menu options
         if re.search(r'^\s*\d+\.', prompt_text, re.MULTILINE):
-            # It's a menu - forward to user
+            # It's a menu - extract options and forward to user
             if self.permission_callback:
-                logger.info("Forwarding menu prompt to user via Telegram")
-                try:
-                    # For now, just auto-select option 1 for menus
-                    # TODO: Could enhance to show menu options in Telegram
-                    logger.info("Auto-selecting option 1 from menu")
-                    return "1\n"
-                except Exception as e:
-                    logger.error(f"Error handling menu: {e}", exc_info=True)
+                logger.info("Detected menu prompt, extracting options...")
+                
+                # Extract menu options using PTY handler
+                menu_options = self.pty_handler._extract_menu_options(prompt_text)
+                
+                if menu_options:
+                    logger.info(f"Found {len(menu_options)} menu options")
+                    try:
+                        # Send menu to Telegram with options as buttons
+                        response_number = await self.permission_callback("menu_prompt", {
+                            "description": prompt_text,
+                            "prompt_type": "menu",
+                            "options": menu_options
+                        })
+                        
+                        # Response should be the option number
+                        if response_number:
+                            logger.info(f"User selected option {response_number}")
+                            return f"{response_number}\n"
+                        else:
+                            logger.warning("No option selected, defaulting to 1")
+                            return "1\n"
+                    except Exception as e:
+                        logger.error(f"Error handling menu: {e}", exc_info=True)
+                        return "1\n"
+                else:
+                    # Couldn't extract options, auto-select 1
+                    logger.warning("Couldn't extract menu options, auto-selecting 1")
                     return "1\n"
         
         # Unknown prompt type - log and deny

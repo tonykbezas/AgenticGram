@@ -677,29 +677,84 @@ class AgenticGramBot:
             description = details.get('description', 'Unknown action')
             
             # Create message based on action type
-            if action_type == "interactive_prompt":
+            if action_type == "menu_prompt":
+                # This is a menu with numbered options
+                message = f"🔐 **Claude is asking:**\n\n{description}\n\n**Please select an option:**"
+                
+                # Create buttons for each menu option
+                menu_options = details.get('options', [])
+                keyboard = []
+                for option in menu_options:
+                    number = option['number']
+                    text = option['text']
+                    # Create button with option number as callback data
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"{number}. {text[:50]}", # Limit text length
+                            callback_data=f"perm_{request_id}_{number}"
+                        )
+                    ])
+                
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+            elif action_type == "interactive_prompt":
                 # This is a yes/no question from Claude
                 message = f"🔐 **Claude is asking:**\n\n{description}\n\n**Please respond:**"
+                # Create inline keyboard with Yes/No buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                        InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
             elif action_type == "directory_access":
                 target = details.get('target', 'unknown directory')
                 message = f"🔐 **Permission Required**\n\nClaude wants to access:\n`{target}`\n\n**Allow access?**"
+                # Create inline keyboard with Yes/No buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                        InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
             elif action_type == "file_edit":
                 target = details.get('target', 'unknown file')
                 message = f"🔐 **Permission Required**\n\nClaude wants to edit:\n`{target}`\n\n**Allow this action?**"
+                # Create inline keyboard with Yes/No buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                        InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
             elif action_type == "command_exec":
                 target = details.get('target', 'unknown command')
                 message = f"🔐 **Permission Required**\n\nClaude wants to run:\n`{target}`\n\n**Allow this command?**"
+                # Create inline keyboard with Yes/No buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                        InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
             else:
                 message = f"🔐 **Permission Required**\n\n{description}\n\n**Approve?**"
-            
-            # Create inline keyboard with Yes/No buttons
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
-                    InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                # Create inline keyboard with Yes/No buttons
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Yes", callback_data=f"perm_{request_id}_yes"),
+                        InlineKeyboardButton("❌ No", callback_data=f"perm_{request_id}_no")
+                    ]
                 ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                reply_markup = InlineKeyboardMarkup(keyboard)
             
             # Send permission request to user
             await self.application.bot.send_message(
@@ -781,14 +836,14 @@ class AgenticGramBot:
     
     async def _handle_permission_callback(self, query) -> None:
         """Handle permission button callbacks."""
-        # Parse: perm_<request_id>_<yes|no>
+        # Parse: perm_<request_id>_<yes|no|1|2|3...>
         parts = query.data.split("_")
         if len(parts) != 3:
             await query.edit_message_text("❌ Invalid permission data")
             return
         
         request_id = parts[1]
-        action = parts[2]  # "yes" or "no"
+        action = parts[2]  # "yes", "no", or a number (menu option)
         
         # Get pending permission future
         future = self.pending_permissions.get(request_id)
@@ -796,12 +851,18 @@ class AgenticGramBot:
             await query.edit_message_text("⏱️ This permission request has expired.")
             return
         
-        # Set result
-        approved = (action == "yes")
-        future.set_result(approved)
+        # Set result based on action type
+        if action in ["yes", "no"]:
+            # Yes/No response
+            approved = (action == "yes")
+            future.set_result(approved)
+            result_text = "✅ Approved" if approved else "❌ Denied"
+        else:
+            # Menu option number
+            future.set_result(action)  # Return the option number
+            result_text = f"✅ Selected option {action}"
         
         # Update message
-        result_text = "✅ Approved" if approved else "❌ Denied"
         await query.edit_message_text(
             f"{query.message.text}\n\n**Decision:** {result_text}",
             parse_mode="Markdown"
