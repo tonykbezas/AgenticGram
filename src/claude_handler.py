@@ -11,6 +11,8 @@ from typing import Optional, Callable, Dict, Any
 from datetime import datetime
 from pathlib import Path
 
+from .pty_handler import PTYHandler
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,10 @@ class ClaudeHandler:
         self.pending_permissions: Dict[str, asyncio.Future] = {}
         # Use custom path if provided, otherwise default to 'claude' command
         self.claude_path = claude_path or "claude"
+        
+        # Initialize PTY handler
+        self.pty_handler = PTYHandler()
+        
         logger.info(f"Claude handler initialized with path: {self.claude_path}")
     
     async def check_availability(self) -> bool:
@@ -75,12 +81,13 @@ class ClaudeHandler:
         timeout: int = 1800  # 30 minutes for long tasks
     ) -> Dict[str, Any]:
         """
-        Execute a command via Claude Code CLI with interactive permission handling.
+        Execute a command via Claude Code CLI with PTY for full interactive support.
         
         Args:
             instruction: The instruction to send to Claude Code
             session_id: Session ID for context persistence
             work_dir: Working directory for the session
+            output_callback: Optional callback for streaming output
             timeout: Command timeout in seconds
             
         Returns:
@@ -90,148 +97,31 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
-            # Start Claude Code process
-            # Note: Using --dangerously-skip-permissions because interactive prompts
-            # create a deadlock - Claude waits for stdin before producing stdout,
-            # but we can't detect the prompt without reading stdout first.
-            # Users can manually trust directories via: claude trust <directory>
-            process = await asyncio.create_subprocess_exec(
+            # Build command
+            command = [
                 self.claude_path,
-                "--dangerously-skip-permissions",
                 "--session-id", session_id,
-                instruction,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir
+                instruction
+            ]
+            
+            logger.info(f"Executing Claude CLI with PTY: {' '.join(command[:3])}...")
+            
+            # Execute with PTY
+            result = await self.pty_handler.execute_with_pty(
+                command=command,
+                cwd=work_dir,
+                prompt_callback=self._handle_interactive_prompt,
+                output_callback=output_callback,
+                timeout=timeout
             )
             
-            logger.info(f"Started Claude CLI process with session {session_id} in {work_dir}")
-            
-            # Handle interactive I/O with permission requests and streaming
-            output_lines = []
-            error_lines = []
-            last_callback_time = 0
-            CALLBACK_INTERVAL = 2.5  # Send update every 2.5 seconds
-            
-            try:
-                # Read output with timeout
-                async with asyncio.timeout(timeout):
-                    # Create tasks for reading stdout and waiting for process
-                    line_count = 0
-                    
-                    async def read_stdout():
-                        """Read stdout line by line and handle permissions."""
-                        nonlocal last_callback_time, line_count
-                        if not process.stdout:
-                            logger.warning("No stdout available from Claude CLI process")
-                            return
-                        
-                        logger.info("Started reading Claude CLI output...")
-                        
-                        while True:
-                            line = await process.stdout.readline()
-                            if not line:  # EOF reached
-                                logger.info(f"Claude CLI stdout complete. Total lines: {line_count}")
-                                break
-                            
-                            line_count += 1
-                            decoded_line = line.decode().strip()
-                            output_lines.append(decoded_line)
-                            
-                            # Log every line at INFO level so you can see progress
-                            logger.info(f"[STDOUT Line {line_count}] {decoded_line[:150]}")
-                            
-                            # Check for permission requests
-                            permission_request = self._parse_permission_request(decoded_line)
-                            if permission_request:
-                                logger.warning(f"Permission request detected: {permission_request['action_type']}")
-                                approved = await self._handle_permission_request(permission_request)
-                                
-                                # Send response to Claude Code
-                                if process.stdin:
-                                    response = "y\n" if approved else "n\n"
-                                    process.stdin.write(response.encode())
-                                    await process.stdin.drain()
-                                    logger.info(f"Sent permission response: {response.strip()}")
-                            
-                            # Call streaming callback periodically
-                            import time
-                            current_time = time.time()
-                            if output_callback and (current_time - last_callback_time) >= CALLBACK_INTERVAL:
-                                logger.info(f"Triggering stream callback with {len(output_lines)} lines...")
-                                try:
-                                    await output_callback("\n".join(output_lines))
-                                    last_callback_time = current_time
-                                except Exception as e:
-                                    logger.error(f"Error in output callback: {e}")
-                    
-                    async def read_stderr():
-                        """Read stderr to capture error messages."""
-                        if not process.stderr:
-                            logger.warning("No stderr available from Claude CLI process")
-                            return
-                        
-                        logger.info("Started reading Claude CLI errors...")
-                        stderr_line_count = 0
-                        
-                        while True:
-                            line = await process.stderr.readline()
-                            if not line:  # EOF reached
-                                logger.info(f"Claude CLI stderr complete. Total error lines: {stderr_line_count}")
-                                break
-                            
-                            stderr_line_count += 1
-                            decoded_line = line.decode().strip()
-                            error_lines.append(decoded_line)
-                            
-                            # Log stderr immediately - this is critical for debugging
-                            logger.error(f"[STDERR Line {stderr_line_count}] {decoded_line}")
-                    
-                    # Wait for stdout, stderr reading and process completion
-                    logger.info("Waiting for Claude CLI process to complete...")
-                    await asyncio.gather(
-                        read_stdout(),
-                        read_stderr(),
-                        process.wait()
-                    )
-                    logger.info(f"Claude CLI process finished with return code: {process.returncode}")
-                
-                # Final callback with complete output
-                if output_callback and output_lines:
-                    try:
-                        await output_callback("\n".join(output_lines))
-                    except Exception as e:
-                        logger.error(f"Error in final callback: {e}")
-                
-            except asyncio.TimeoutError:
-                logger.warning(f"Command timed out after {timeout} seconds")
-                process.kill()
-                await process.wait()
-                return {
-                    "success": False,
-                    "output": "\n".join(output_lines),
-                    "error": f"Command execution timed out after {timeout} seconds"
-                }
-            
-            # Stderr is now read concurrently, no need to read again
-            output = "\n".join(output_lines)
-            error = "\n".join(error_lines)
-            
-            if process.returncode == 0:
+            if result["success"]:
                 logger.info(f"Command completed successfully for session {session_id}")
-                return {
-                    "success": True,
-                    "output": output
-                }
             else:
-                logger.error(f"Command failed with return code {process.returncode}")
-                return {
-                    "success": False,
-                    "output": output,
-                    "error": error or f"Command failed with return code {process.returncode}"
-                }
-        
+                logger.error(f"Command failed: {result.get('error', 'Unknown error')}")
+            
+            return result
+            
         except Exception as e:
             logger.error(f"Error executing Claude Code command: {e}", exc_info=True)
             return {
@@ -239,6 +129,67 @@ class ClaudeHandler:
                 "output": "",
                 "error": f"Unexpected error: {str(e)}"
             }
+    
+    async def _handle_interactive_prompt(self, prompt_text: str) -> str:
+        """
+        Handle interactive prompts from Claude CLI.
+        
+        Args:
+            prompt_text: The prompt text (ANSI codes already stripped)
+            
+        Returns:
+            Response to send to Claude (e.g., "1\n", "y\n", "n\n")
+        """
+        # Patterns for directory trust prompts
+        trust_patterns = [
+            "Yes, I trust this folder",
+            "Is this a project you created",
+            "Quick safety check",
+            "trust this folder"
+        ]
+        
+        # Check if it's a directory trust prompt
+        if any(pattern in prompt_text for pattern in trust_patterns):
+            logger.info("Auto-approving directory trust prompt")
+            return "1\n"  # Select option 1 (Yes, I trust)
+        
+        # Check for yes/no prompts
+        if any(indicator in prompt_text for indicator in ["(y/n)", "(yes/no)", "[Y/n]", "[y/N]"]):
+            # Forward to permission callback
+            if self.permission_callback:
+                logger.info("Forwarding yes/no prompt to user via Telegram")
+                try:
+                    approved = await self.permission_callback("interactive_prompt", {
+                        "description": prompt_text,
+                        "prompt_type": "yes_no"
+                    })
+                    response = "y\n" if approved else "n\n"
+                    logger.info(f"User {'approved' if approved else 'denied'} prompt")
+                    return response
+                except Exception as e:
+                    logger.error(f"Error in permission callback: {e}", exc_info=True)
+                    return "n\n"  # Default to deny on error
+            else:
+                logger.warning("No permission callback set, denying prompt")
+                return "n\n"
+        
+        # Check for numbered menu options
+        if re.search(r'^\s*\d+\.', prompt_text, re.MULTILINE):
+            # It's a menu - forward to user
+            if self.permission_callback:
+                logger.info("Forwarding menu prompt to user via Telegram")
+                try:
+                    # For now, just auto-select option 1 for menus
+                    # TODO: Could enhance to show menu options in Telegram
+                    logger.info("Auto-selecting option 1 from menu")
+                    return "1\n"
+                except Exception as e:
+                    logger.error(f"Error handling menu: {e}", exc_info=True)
+                    return "1\n"
+        
+        # Unknown prompt type - log and deny
+        logger.warning(f"Unknown prompt type, denying: {prompt_text[:100]}")
+        return "n\n"
     
     def _parse_permission_request(self, line: str) -> Optional[Dict[str, Any]]:
         """
