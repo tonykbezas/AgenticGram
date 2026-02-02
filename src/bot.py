@@ -89,6 +89,7 @@ class AgenticGramBot:
         self.app.add_handler(CommandHandler("session", self._cmd_session))
         self.app.add_handler(CommandHandler("status", self._cmd_status))
         self.app.add_handler(CommandHandler("browse", self._cmd_browse))
+        self.app.add_handler(CommandHandler("trust", self._cmd_trust))
         
         # File upload handler
         self.app.add_handler(MessageHandler(filters.Document.ALL, self._handle_file))
@@ -150,6 +151,9 @@ class AgenticGramBot:
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
             "• `/browse [path]` - Browse and select working directory\n"
             "  Navigate through directories with inline buttons\n\n"
+            "• `/trust [directory]` - Trust a directory for Claude CLI\n"
+            "  Prevents permission prompts for the specified directory\n"
+            "  If no directory specified, trusts current work directory\n\n"
             "• `/session new` - Start a new session\n"
             "• `/session clear` - Clear current session\n"
             "• `/session info` - Show session information\n\n"
@@ -158,9 +162,8 @@ class AgenticGramBot:
             "Send me code files and I'll save them to your workspace.\n"
             "Supported: .py, .sql, .js, .txt, .json, .md\n\n"
             "**Permission System:**\n"
-            "When Claude Code needs to edit files or run commands, "
-            "I'll ask for your approval with inline buttons. "
-            f"You have {self.config['PERMISSION_TIMEOUT_MINUTES']} minutes to respond."
+            "Claude uses `--dangerously-skip-permissions` to avoid deadlocks. "
+            "Use `/trust <directory>` to manually trust directories if needed."
         )
         
         await update.message.reply_text(help_message, parse_mode="Markdown")
@@ -407,6 +410,89 @@ class AgenticGramBot:
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
+    
+    async def _cmd_trust(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /trust command to trust a directory for Claude CLI."""
+        user_id = update.effective_user.id
+        
+        # Check authorization
+        if not self._is_authorized(user_id):
+            await update.message.reply_text("❌ Unauthorized")
+            return
+        
+        # Get directory path from arguments or use current work directory
+        if context.args:
+            directory = " ".join(context.args)
+        else:
+            # Use current work directory
+            session = self.session_manager.get_session(user_id)
+            if not session:
+                await update.message.reply_text(
+                    "❌ No directory specified and no active session.\n\n"
+                    "Usage: `/trust <directory_path>`\n"
+                    "Example: `/trust /home/tony/projects`",
+                    parse_mode="Markdown"
+                )
+                return
+            directory = session.work_dir
+        
+        # Resolve path
+        try:
+            resolved_path = Path(directory).resolve()
+            
+            if not resolved_path.exists():
+                await update.message.reply_text(
+                    f"❌ Directory does not exist: `{directory}`",
+                    parse_mode="Markdown"
+                )
+                return
+            
+            if not resolved_path.is_dir():
+                await update.message.reply_text(
+                    f"❌ Path is not a directory: `{directory}`",
+                    parse_mode="Markdown"
+                )
+                return
+            
+            # Run claude trust command
+            import subprocess
+            result = subprocess.run(
+                ["claude", "trust", str(resolved_path)],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                await update.message.reply_text(
+                    f"✅ **Directory Trusted**\n\n"
+                    f"Claude will no longer ask for permissions in:\n"
+                    f"`{resolved_path}`\n\n"
+                    f"**Note:** This applies to all Claude CLI sessions, not just this bot.",
+                    parse_mode="Markdown"
+                )
+                logger.info(f"User {user_id} trusted directory: {resolved_path}")
+            else:
+                error = result.stderr or result.stdout or "Unknown error"
+                await update.message.reply_text(
+                    f"❌ **Failed to trust directory**\n\n"
+                    f"Error: `{error}`\n\n"
+                    f"Make sure Claude CLI is installed and accessible.",
+                    parse_mode="Markdown"
+                )
+                logger.error(f"Failed to trust directory {resolved_path}: {error}")
+                
+        except subprocess.TimeoutExpired:
+            await update.message.reply_text(
+                "❌ Command timed out. Please try again.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error: {str(e)}",
+                parse_mode="Markdown"
+            )
+            logger.error(f"Error in /trust command: {e}", exc_info=True)
         
         logger.info(f"User {user_id} started browsing from {start_path}")
     

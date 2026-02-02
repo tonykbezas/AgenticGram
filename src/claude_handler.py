@@ -90,9 +90,14 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
-            # Start Claude Code process (interactive permissions enabled)
+            # Start Claude Code process
+            # Note: Using --dangerously-skip-permissions because interactive prompts
+            # create a deadlock - Claude waits for stdin before producing stdout,
+            # but we can't detect the prompt without reading stdout first.
+            # Users can manually trust directories via: claude trust <directory>
             process = await asyncio.create_subprocess_exec(
                 self.claude_path,
+                "--dangerously-skip-permissions",
                 "--session-id", session_id,
                 instruction,
                 stdin=asyncio.subprocess.PIPE,
