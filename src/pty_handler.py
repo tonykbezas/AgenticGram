@@ -57,15 +57,48 @@ class PTYHandler:
     
     def strip_ansi(self, text: str) -> str:
         """
-        Remove ANSI escape codes from text.
+        Remove ANSI escape codes and TUI artifacts from text.
         
         Args:
             text: Text potentially containing ANSI codes
             
         Returns:
-            Clean text without ANSI codes
+            Clean text without ANSI codes or TUI artifacts
         """
-        return self.ansi_escape.sub('', text)
+        # First strip ANSI codes
+        text = self.ansi_escape.sub('', text)
+        
+        # Then clean TUI artifacts
+        return self._clean_tui_artifacts(text)
+    
+    def _clean_tui_artifacts(self, text: str) -> str:
+        """
+        Remove TUI artifacts like borders, headers, etc.
+        
+        Args:
+            text: Text to clean
+            
+        Returns:
+            Cleaned text
+        """
+        if not text:
+            return ""
+            
+        # Remove Claude Code header box (╭─── Claude Code ... ╮)
+        # Matches the top border, content, and side borders until end of box
+        text = re.sub(r'╭─── Claude Code.*?─╮', '', text, flags=re.DOTALL)
+        
+        # Remove standalone TUI lines that are just borders
+        # Matches lines that are just │ or vertical bars with whitespace
+        text = re.sub(r'^\s*│\s*$', '', text, flags=re.MULTILINE)
+        
+        # Remove "blob data" markers from logs if they leaked into output
+        text = re.sub(r'\[\d+B blob data\]', '', text)
+        
+        # Remove multiple empty lines specifically caused by TUI cleanup
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        return text
     
     def _is_animation_frame(self, text: str) -> bool:
         """

@@ -757,7 +757,7 @@ class AgenticGramBot:
                 reply_markup = InlineKeyboardMarkup(keyboard)
             
             # Send permission request to user
-            await self.application.bot.send_message(
+            await self.app.bot.send_message(
                 chat_id=chat_id,
                 text=message,
                 reply_markup=reply_markup,
@@ -776,7 +776,7 @@ class AgenticGramBot:
             logger.warning(f"Permission request {request_id} timed out")
             # Send timeout message
             try:
-                await self.application.bot.send_message(
+                await self.app.bot.send_message(
                     chat_id=chat_id,
                     text="⏱️ Permission request timed out. Denied by default.",
                     parse_mode="Markdown"
