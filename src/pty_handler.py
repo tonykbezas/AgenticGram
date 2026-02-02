@@ -22,7 +22,18 @@ class PTYHandler:
     def __init__(self):
         """Initialize PTY handler."""
         # Regex to match ANSI escape codes
-        self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        # Regex to match ANSI escape codes including OSC sequences
+        # Matches:
+        # 1. CSI and Fe: \x1B[...] or \x1B...
+        # 2. OSC: \x1B] ... \x07 or \x1B] ... \x1B\
+        # 3. DCS/PM/APC: \x1B[PX^_] ... \x1B\
+        self.ansi_escape = re.compile(
+            r'(?:\x1B\]|\x9D).*?(?:\x1B\\|\x07)'  # OSC
+            r'|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]'  # CSI
+            r'|(?:\x1B[PX^_].*?\x1B\\)'           # DCS/PM/APC
+            r'|(?:\x1B[@-Z\\^_]|[\x80-\x9A\x9C-\x9F])', # Generic (excluding [ and ])
+            re.VERBOSE | re.DOTALL
+        )
         
         # Prompt detection patterns
         self.prompt_indicators = [
