@@ -97,14 +97,18 @@ class ClaudeHandler:
             # Ensure working directory exists
             Path(work_dir).mkdir(parents=True, exist_ok=True)
             
+            # Generate unique session ID for this command to avoid conflicts
+            # Claude CLI doesn't allow multiple processes with same session ID
+            unique_session_id = f"{session_id}-{uuid.uuid4().hex[:8]}"
+            
             # Build command
             command = [
                 self.claude_path,
-                "--session-id", session_id,
+                "--session-id", unique_session_id,
                 instruction
             ]
             
-            logger.info(f"Executing Claude CLI with PTY: {' '.join(command[:3])}...")
+            logger.info(f"Executing Claude CLI with PTY (session: {unique_session_id})")
             
             # Execute with PTY
             result = await self.pty_handler.execute_with_pty(
