@@ -84,9 +84,9 @@ class PTYHandler:
         if not text:
             return ""
             
-        # Remove Claude Code header box (╭─── Claude Code ... ╮)
-        # Matches the top border, content, and side borders until end of box
-        text = re.sub(r'╭─── Claude Code.*?─╮', '', text, flags=re.DOTALL)
+        # Remove Claude Code header box (╭─── Claude Code ... ╰───...╯)
+        # Matches top border, content, and bottom border
+        text = re.sub(r'╭─── Claude Code.*?╰[─\s]*╯\s*', '', text, flags=re.DOTALL)
         
         # Remove standalone TUI lines that are just borders
         # Matches lines that are just │ or vertical bars with whitespace

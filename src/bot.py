@@ -234,55 +234,55 @@ class AgenticGramBot:
             if not output:
                 return
 
-            try:
-                # Check for "thinking" animation frames
-                clean_text = output.strip()
-                if 0 < len(clean_text) <= 3 and all(c in self.Thinking_chars for c in clean_text):
-                    current_time = asyncio.get_running_loop().time()
-                    # Throttle animation updates (max 1 per 1.5s)
-                    if current_time - self.last_thinking_time >= 1.5:
-                        spinner = clean_text[0] # Take first char
-                        try:
-                            # Use status_message directly if it's the one we're updating
-                            await status_message.edit_text(
-                                f"🤖 **Claude is thinking...** {spinner}",
-                                parse_mode="Markdown"
-                            )
-                            self.last_thinking_time = current_time
-                        except Exception:
-                            pass # Ignore animation errors
-                    return # Stop processing this chunk
+            if not output:
+                return
 
-                # If we have real text, proceed with normal update
+            try:
+                # 1. Clean output body (remove the "infinite spaces" and spinner history)
+                # Remove lines that look like they are just spinner characters
+                # This keeps the main text clean
+                clean_body = re.sub(
+                    r'^\s*[✢*✶✻✽·●]\s*$', 
+                    '', 
+                    output, 
+                    flags=re.MULTILINE
+                )
                 
-                # Avoid duplicate updates
-                if output == last_output:
-                    return
+                # Check if we are currently in "Thinking" state (end of stream is a spinner)
+                raw_tail = output.strip().split('\n')[-1].strip() if output.strip() else ""
+                is_thinking = len(raw_tail) == 1 and raw_tail in self.Thinking_chars
                 
                 # Rate limiting
                 import time
                 current_time = time.time()
                 if current_time - last_edit_time < EDIT_COOLDOWN:
-                    return
-                
+                     return
+
                 update_count += 1
-                last_output = output
                 last_edit_time = current_time
                 
-                # Log streaming update (throttle logging)
-                if update_count % 10 == 0:
-                   logger.info(f"Stream update #{update_count}")
+                # Format the message
+                escaped_body = escape_markdown(clean_body.strip())
                 
-                # Format output with truncation if needed
-                # Escape markdown in output to prevent errors
-                escaped_output = escape_markdown(output)
-                
-                if len(output) > 3500:
-                    # Keep last 3500 chars (approx)
-                    truncated = escaped_output[-3500:]
-                    formatted = f"🤖 **Claude is working...**\n\n```\n...[truncated]\n\n{truncated}\n```"
+                if is_thinking:
+                    spinner = raw_tail
+                    # If body is empty or very short, just show thinking
+                    if len(escaped_body) < 10:
+                        formatted = f"🤖 **Claude is thinking...** {spinner}"
+                    else:
+                        # Show content + thinking status
+                        # Truncate content if needed
+                        if len(escaped_body) > 3500:
+                            escaped_body = "...[truncated]\n\n" + escaped_body[-3500:]
+                        formatted = f"🤖 **Claude is working...**\n\n```\n{escaped_body}\n```\n\n_Thinking {spinner}_"
                 else:
-                    formatted = f"🤖 **Claude is working...**\n\n```\n{escaped_output}\n```"
+                    # Just content
+                    if not escaped_body:
+                        formatted = "🤖 **Claude is working...**"
+                    else:
+                        if len(escaped_body) > 3500:
+                            escaped_body = "...[truncated]\n\n" + escaped_body[-3500:]
+                        formatted = f"🤖 **Claude is working...**\n\n```\n{escaped_body}\n```"
                 
                 try:
                     await status_message.edit_text(
@@ -290,7 +290,6 @@ class AgenticGramBot:
                         parse_mode="Markdown"
                     )
                 except Exception as e:
-                    # Log edit errors for debugging
                     logger.debug(f"Message edit failed: {e}")
             
             except Exception as e:
