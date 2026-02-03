@@ -112,6 +112,25 @@ class PTYWrapper:
         # 8. Handle carriage returns to fix "duplicate" lines from animations
         text = self._process_carriage_returns(text)
 
+        # 9. Remove specific noise phrases/banner text (User request)
+        noise_phrases = [
+            r'Try ".*?"',
+            r'\? for shortcuts',
+            r'Claude Code has switched from npm',
+            r'`claude install` or see',
+            r'claude-code/getting-started',
+            r'esc to interrupt',
+            r'\(thinking\)',
+            r'Nebulizing',
+            r'https://docs\.anthropic\.com[^\s]*',
+        ]
+        for phrase in noise_phrases:
+             text = re.sub(phrase, '', text, flags=re.IGNORECASE)
+
+        # Final cleanup of empty lines created by phrase removal
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+
         logger.info(f"Cleaned text: {text[:100]!r}...")
         return text
 
