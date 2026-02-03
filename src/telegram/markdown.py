@@ -16,7 +16,7 @@ def escape_markdown(text: str) -> str:
     if not text:
         return ""
         
-    # Characters that need escaping in Telegram Markdown
+    # Characters that need escaping in Telegram MarkdownV2
     # We escape them with a backslash
-    escape_chars = '_*`['
+    escape_chars = r"\_*[]()~`>#+-=|{}.!"
     return ''.join(f'\\{c}' if c in escape_chars else c for c in text)
