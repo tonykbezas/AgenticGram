@@ -91,8 +91,9 @@ class PTYWrapper:
         
         # 3. Remove "noise" characters (spinners, blocks, etc.)
         # Note: We keep some structure chars but remove the specific noise ones for now
+        # Removed ● (bullet) from here so it isn't stripped from message content
         # Added from user suggestion: ✶, ✻, ✽, ✢, ▐, ▛, ▜, ▌, ▝, ❯
-        text = re.sub(r'[✶✻✽✢·●▐▛▜▌▝❯✢]', '', text)
+        text = re.sub(r'[✶✻✽✢·▐▛▜▌▝❯✢]', '', text)
         
         # 4. Remove standalone TUI lines that are just borders (failsafe)
         text = re.sub(r'^\s*│\s*$', '', text, flags=re.MULTILINE)
@@ -153,17 +154,26 @@ class PTYWrapper:
         Returns:
             True if text appears to be an animation frame
         """
-        if not text or len(text.strip()) < 3:
+        if not text:
             return True
+            
+        # If text contains significant alphanumeric content, it's likely NOT an animation
+        # (unless it's a specific loading message pattern)
+        has_content = bool(re.search(r'[a-zA-Z0-9]{2,}', text))
         
-        # Check for animation patterns
+        # Check for specific loading message patterns first
         for pattern in self.animation_patterns:
-            if re.search(pattern, text):
+            # If pattern is complex (contains alphabetic chars like 'reading'), check directly
+            if re.search(r'[a-zA-Z]', pattern):
+                if re.search(pattern, text):
+                    return True
+            # For symbol-only patterns, only match if we DON'T have other content
+            elif re.search(pattern, text) and not has_content:
                 return True
         
-        # Check if mostly special characters
+        # Check if mostly special characters (fallback)
         clean = re.sub(r'[\s\n\r]', '', text)
-        if len(clean) > 0:
+        if len(clean) > 0 and not has_content:
             special_chars = len(re.findall(r'[✻✶*✢·●✽⠂⠐⠁⠈⠄⠠]', clean))
             if special_chars / len(clean) > 0.5:
                 return True
