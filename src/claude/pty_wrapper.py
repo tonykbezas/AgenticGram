@@ -381,21 +381,22 @@ class PTYWrapper:
                     current_time = time.time()
                     # Only send if enough time passed
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
-                        if not self._is_animation_frame(clean_output):
-                            # TTL / Expiration Logic
-                            # specific_content_key = hash(clean_output) # Simple hash for cache key
-                            content_key = clean_output
-                            
-                            last_sent_time = self._message_cache.get(content_key, 0)
-                            
-                            # If message is new OR expired (TTL=60s)
-                            if (current_time - last_sent_time) > 60:
+                        
+                        # Filter down to only "relevant" lines for the user
+                        user_facing_output = self._filter_relevant_lines(clean_output)
+                        
+                        if user_facing_output and user_facing_output.strip():
+                             # Only send if we actually have meaningful content left
+                             specific_content_key = user_facing_output
+                             last_sent_time = self._message_cache.get(specific_content_key, 0)
+                             
+                             if (current_time - last_sent_time) > 60:
                                 try:
-                                    await output_callback(clean_output)
+                                    await output_callback(user_facing_output)
                                     last_callback_time = current_time
-                                    self._message_cache[content_key] = current_time
+                                    self._message_cache[specific_content_key] = current_time
                                     
-                                    # Periodic cache cleanup (simple)
+                                    # Periodic cleanup
                                     if len(self._message_cache) > 100:
                                         self._message_cache = {
                                             k: v for k, v in self._message_cache.items() 
@@ -403,11 +404,53 @@ class PTYWrapper:
                                         }
                                 except Exception as e:
                                     logger.error(f"Error in output callback: {e}")
-                            else:
-                                # Message content is identical to one sent recently (<60s)
-                                pass 
+                             else:
+                                 pass
                         else:
-                            logger.debug("Skipping animation frame")
+                            # If filtering removed everything, it was probably noise
+                            pass
+
+    def _filter_relevant_lines(self, text: str) -> str:
+        """
+        Keep only lines that are likely important to the user:
+        - Bullet points (●)
+        - Prompts (❯)
+        - Menu options (1. Yes)
+        - Specific headers (Read file, Search)
+        """
+        if not text:
+            return ""
+            
+        lines = text.split('\n')
+        relevant_lines = []
+        
+        # Regex patterns for relevant lines
+        allow_patterns = [
+            r'^\s*●',             # Bullet points
+            r'^\s*❯',             # Input prompts
+            r'^\s*\d+\.',         # Menu options (1. Option)
+            r'^\s*Do you want to proceed', # Interaction
+            r'^\s*Read file',     # Context headers
+            r'^\s*Search\(',      # Search context
+            r'^\s*Error:',        # Errors
+            r'^\s*Warning:',      # Warnings
+        ]
+        
+        for line in lines:
+            line_str = line.rstrip()
+            if not line_str:
+                continue
+                
+            is_relevant = False
+            for pattern in allow_patterns:
+                if re.search(pattern, line_str):
+                    is_relevant = True
+                    break
+            
+            if is_relevant:
+                relevant_lines.append(line_str)
+                
+        return '\n'.join(relevant_lines)
             
             try:
                 while True:
