@@ -109,7 +109,7 @@ class ClaudeClient:
                 output_callback=output_callback,
                 timeout=timeout
             )
-            
+            logger.info(f"Tonyy: {result}")
             if result["success"]:
                 logger.info(f"Command completed successfully")
             else:
