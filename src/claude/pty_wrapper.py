@@ -100,7 +100,7 @@ class PTYWrapper:
         # 6. Clean up excessive newlines
         # We reduce 3+ newlines to 2 to preserve paragraph structure but remove huge gaps
         text = re.sub(r'\n{3,}', '\n\n', text)
-        
+        logger.info(f"Cleaned text: {text}")
         return text
     
     def _is_animation_frame(self, text: str) -> bool:
