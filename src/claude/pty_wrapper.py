@@ -257,11 +257,12 @@ class PTYWrapper:
                         output_buffer += text
                         
                         clean_text = self.strip_ansi(output_buffer)
-                        clean_output = clean_text
+                        if clean_text:
+                             logger.debug(f"PTY output ({len(clean_text)} chars): {clean_text[:200]}")
                         
                         last_output_time = time.time()
                         
-                        logger.info(f"PTY output ({len(clean_text)} chars): {clean_text[:200]}")
+                        logger.debug(f"PTY output ({len(clean_text)} chars): {clean_text[:200]}")
                         
                     except OSError as e:
                         logger.error(f"Error reading from PTY: {e}")
