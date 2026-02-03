@@ -100,6 +100,11 @@ class PTYWrapper:
         # 6. Clean up excessive newlines
         # We reduce 3+ newlines to 2 to preserve paragraph structure but remove huge gaps
         text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # 7. Remove non-printable characters (fixes "2B blob data" in logs)
+        # Keeps newlines (\n), carriage returns (\r), and tabs (\t)
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        
         logger.info(f"Cleaned text: {text}")
         return text
     
