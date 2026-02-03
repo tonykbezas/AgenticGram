@@ -105,15 +105,40 @@ class PTYWrapper:
         # Keeps newlines (\n), carriage returns (\r), and tabs (\t)
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
         
-        # DEBUG: Dump to file to inspect actual content
-        try:
-            with open("debug_pty_artifacts.txt", "a", encoding="utf-8") as f:
-                f.write(f"\n--- CHUNK {time.time()} ---\n{ascii(text)}\n")
-        except Exception as e:
-            logger.error(f"Failed to write debug file: {e}")
+        # 8. Handle carriage returns to fix "duplicate" lines from animations
+        text = self._process_carriage_returns(text)
 
-        logger.info(f"Cleaned text: {text!r}")
+        logger.info(f"Cleaned text: {text[:100]!r}...")
         return text
+
+    def _process_carriage_returns(self, text: str) -> str:
+        """
+        Simulate terminal carriage return (\r) behavior to avoid duplicate lines.
+        When a \r is found, it usually means the line is being rewritten.
+        We keep the last 'frame' of the line.
+        """
+        if '\r' not in text:
+            return text
+            
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            if '\r' in line:
+                # If the line has carriage returns, we essentially want the last
+                # segment that doesn't start with \r, or we simulate the overwrite.
+                # Simplest robust approach for logs/chat: take the content after the last \r
+                parts = line.split('\r')
+                # Filter empty parts avoiding artifacts if line ends with \r
+                valid_parts = [p for p in parts if p]
+                if valid_parts:
+                    cleaned_lines.append(valid_parts[-1])
+                else:
+                    cleaned_lines.append("")
+            else:
+                cleaned_lines.append(line)
+                
+        return '\n'.join(cleaned_lines)
     
     def _is_animation_frame(self, text: str) -> bool:
         """
@@ -246,6 +271,7 @@ class PTYWrapper:
             # Read loop
             output_buffer = ""
             clean_output = ""
+            last_sent_output = ""  # Cache to prevent duplicate updates
             last_output_time = time.time()
             last_callback_time = 0
             CALLBACK_INTERVAL = 0.5
@@ -281,7 +307,8 @@ class PTYWrapper:
                         clean_text = self.strip_ansi(output_buffer)
                         clean_output = clean_text
                         if clean_text:
-                             logger.debug(f"PTY output ({len(clean_text)} chars): {clean_text[:200]!r}")
+                             # Don't log full output every time to reduce noise
+                             pass
                         
                         last_output_time = time.time()
                         
@@ -301,23 +328,28 @@ class PTYWrapper:
                                 os.write(master_fd, response.encode())
                                 output_buffer = ""
                                 clean_output = ""
+                                last_sent_output = ""
                                 last_output_time = time.time()
                         except Exception as e:
                             logger.error(f"Error in prompt callback: {e}", exc_info=True)
                 
                 if output_callback and clean_output:
                     current_time = time.time()
+                    # Only send if enough time passed AND content is different
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
-                        if not self._is_animation_frame(clean_output):
-                            try:
-                                await output_callback(clean_output)
-                                last_callback_time = current_time
-                            except Exception as e:
-                                logger.error(f"Error in output callback: {e}")
+                        if clean_output != last_sent_output:
+                            if not self._is_animation_frame(clean_output):
+                                try:
+                                    await output_callback(clean_output)
+                                    last_callback_time = current_time
+                                    last_sent_output = clean_output  # Update cache
+                                except Exception as e:
+                                    logger.error(f"Error in output callback: {e}")
+                            else:
+                                logger.debug("Skipping animation frame")
                         else:
-                            logger.debug("Skipping animation frame")
-                
-                await asyncio.sleep(0.05)
+                            # Content hasn't changed, skip callback
+                            pass
             
             try:
                 while True:
