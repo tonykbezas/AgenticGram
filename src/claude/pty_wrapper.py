@@ -410,6 +410,50 @@ class PTYWrapper:
                             # If filtering removed everything, it was probably noise
                             pass
 
+            # Final cleanup loop
+            try:
+                while True:
+                    ready, _, _ = select.select([master_fd], [], [], 0.1)
+                    if not ready: break
+                    data = os.read(master_fd, 4096)
+                    if not data: break
+                    text = data.decode('utf-8', errors='replace')
+                    output_buffer += text
+                    clean_output = self.strip_ansi(output_buffer)
+            except:
+                pass
+            
+            returncode = process.wait(timeout=5)
+            success = (returncode == 0)
+            
+            return {
+                "success": success,
+                "output": clean_output,
+                "returncode": returncode
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in PTY execution: {e}", exc_info=True)
+            return {
+                "success": False,
+                "output": clean_output if 'clean_output' in locals() else "",
+                "error": str(e)
+            }
+            
+        finally:
+            if master_fd is not None:
+                try:
+                    os.close(master_fd)
+                except:
+                    pass
+            
+            if process and process.poll() is None:
+                try:
+                    process.kill()
+                    process.wait(timeout=5)
+                except:
+                    pass
+
     def _filter_relevant_lines(self, text: str) -> str:
         """
         Keep only lines that are likely important to the user:
@@ -451,60 +495,3 @@ class PTYWrapper:
                 relevant_lines.append(line_str)
                 
         return '\n'.join(relevant_lines)
-            
-            try:
-                while True:
-                    ready, _, _ = select.select([master_fd], [], [], 0.1)
-                    if not ready: break
-                    data = os.read(master_fd, 4096)
-                    if not data: break
-                    text = data.decode('utf-8', errors='replace')
-                    output_buffer += text
-                    clean_output = self.strip_ansi(output_buffer)
-            except:
-                pass
-            
-            if output_callback and clean_output:
-                try:
-                    await output_callback(clean_output)
-                except:
-                    pass
-            
-            returncode = process.wait(timeout=5)
-            success = (returncode == 0)
-            
-            if not success:
-                return {
-                    "success": False,
-                    "output": clean_output,
-                    "error": clean_output or f"Command failed with return code {returncode}",
-                    "returncode": returncode
-                }
-            
-            return {
-                "success": success,
-                "output": clean_output,
-                "returncode": returncode
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in PTY execution: {e}", exc_info=True)
-            return {
-                "success": False,
-                "output": clean_output if 'clean_output' in locals() else "",
-                "error": str(e)
-            }
-            
-        finally:
-            if master_fd is not None:
-                try:
-                    os.close(master_fd)
-                except:
-                    pass
-            
-            if process and process.poll() is None:
-                try:
-                    process.kill()
-                    process.wait(timeout=5)
-                except:
-                    pass
