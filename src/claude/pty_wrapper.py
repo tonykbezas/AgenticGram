@@ -384,10 +384,20 @@ class PTYWrapper:
                 if prompt_callback:
                     idle_time = time.time() - last_output_time
                     
+                    # Check for prompt using the raw clean output (better detection)
                     if self._is_prompt(clean_output, idle_time):
                         logger.info(f"Detected interactive prompt: {clean_output[-200:]}")
+                        
+                        # BUT pass the strictly filtered output to the callback/Telegram
+                        user_facing_prompt = self._filter_relevant_lines(clean_output)
+                        
+                        # Fallback: if filtering removed everything but we detected a prompt,
+                        # pass the raw prompt lines (e.g. "Select an option:")
+                        if not user_facing_prompt.strip():
+                             user_facing_prompt = clean_output.strip()
+
                         try:
-                            response = await prompt_callback(clean_output)
+                            response = await prompt_callback(user_facing_prompt)
                             if response:
                                 logger.info(f"Sending response to prompt: {response.strip()}")
                                 os.write(master_fd, response.encode())
