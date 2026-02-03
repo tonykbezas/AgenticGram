@@ -130,14 +130,14 @@ class Orchestrator:
         session.message_count += 1
         self.session_manager.update_session(session)
         
-        logger.debug(f"Executing command for user {telegram_id}, session {session.session_id}")
+        logger.info(f"Executing command for user {telegram_id}, session {session.session_id}")
         
         # Try Claude Code first (unless forced to use OpenRouter)
         if not force_openrouter:
             claude_available = await self.check_claude_availability()
             
             if claude_available:
-                logger.debug("Using Claude Code CLI")
+                logger.info("Using Claude Code CLI")
                 result = await self.claude_client.execute_command(
                     instruction=instruction,
                     work_dir=session.work_dir,
