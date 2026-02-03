@@ -49,6 +49,9 @@ class PTYWrapper:
             r'\(ctrl\+o to expand\)',  # UI hints
             r'ought for\d+s\)',  # Timing info
         ]
+        
+        # Cache for message deduplication/TTL
+        self._message_cache = {}
     
     def strip_ansi(self, text: str) -> str:
         """
@@ -302,13 +305,24 @@ class PTYWrapper:
                             break
                         
                         text = data.decode('utf-8', errors='replace')
+                        
+                        # CAPTURE: Write raw output to file for debugging
+                        try:
+                            with open("terminal_output.log", "a", encoding="utf-8") as f:
+                                # Write with timestamp marker for readability
+                                f.write(text)
+                        except Exception:
+                            pass
+
                         output_buffer += text
                         
                         clean_text = self.strip_ansi(output_buffer)
                         clean_output = clean_text
-                        if clean_text:
-                             # Don't log full output every time to reduce noise
-                             pass
+                        
+                        # Log meaningful updates
+                        if clean_text and len(clean_text.strip()) > 0:
+                             # Use repr to show hidden chars, truncate for log clarity
+                             logger.info(f"PTY Update: {clean_text[:100]!r}...")
                         
                         last_output_time = time.time()
                         
@@ -328,7 +342,8 @@ class PTYWrapper:
                                 os.write(master_fd, response.encode())
                                 output_buffer = ""
                                 clean_output = ""
-                                last_sent_output = ""
+                                # Reset cache on new interaction
+                                self._message_cache = {} 
                                 last_output_time = time.time()
                         except Exception as e:
                             logger.error(f"Error in prompt callback: {e}", exc_info=True)
@@ -338,11 +353,30 @@ class PTYWrapper:
                     # Only send if enough time passed
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
                         if not self._is_animation_frame(clean_output):
-                            try:
-                                await output_callback(clean_output)
-                                last_callback_time = current_time
-                            except Exception as e:
-                                logger.error(f"Error in output callback: {e}")
+                            # TTL / Expiration Logic
+                            # specific_content_key = hash(clean_output) # Simple hash for cache key
+                            content_key = clean_output
+                            
+                            last_sent_time = self._message_cache.get(content_key, 0)
+                            
+                            # If message is new OR expired (TTL=60s)
+                            if (current_time - last_sent_time) > 60:
+                                try:
+                                    await output_callback(clean_output)
+                                    last_callback_time = current_time
+                                    self._message_cache[content_key] = current_time
+                                    
+                                    # Periodic cache cleanup (simple)
+                                    if len(self._message_cache) > 100:
+                                        self._message_cache = {
+                                            k: v for k, v in self._message_cache.items() 
+                                            if current_time - v < 60
+                                        }
+                                except Exception as e:
+                                    logger.error(f"Error in output callback: {e}")
+                            else:
+                                # Message content is identical to one sent recently (<60s)
+                                pass 
                         else:
                             logger.debug("Skipping animation frame")
             
