@@ -215,7 +215,7 @@ class PTYWrapper:
         # Check if mostly special characters (fallback)
         clean = re.sub(r'[\s\n\r]', '', text)
         if len(clean) > 0 and not has_content:
-            special_chars = len(re.findall(r'[✻✶*✢·●✽⠂⠐⠁⠈⠄⠠]', clean))
+            special_chars = len(re.findall(r'[✻✶*✢·✽⠂⠐⠁⠈⠄⠠]', clean))
             if special_chars / len(clean) > 0.5:
                 return True
         
