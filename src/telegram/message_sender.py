@@ -113,6 +113,7 @@ class MessageSender:
     
     async def send_final(self, result: dict) -> None:
         """Send final completion message."""
+        logger.info(f"Sending final result: {result}")
         if result["success"]:
             output = result["output"]
             backend = result.get("backend", "unknown")
