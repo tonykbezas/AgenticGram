@@ -480,9 +480,9 @@ class PTYWrapper:
         """
         Keep only lines that are likely important to the user:
         - Bullet points (●) -> Send content AFTER the bullet
+        - Multi-line bullet content (indented lines following a bullet)
         - Prompts (❯) -> Keep for interaction
         - Menu options (1. Yes) -> Keep for interaction
-        - Questions/Errors
         """
         if not text:
             return ""
@@ -490,35 +490,57 @@ class PTYWrapper:
         lines = text.split('\n')
         relevant_lines = []
         
-        # Regex patterns for relevant lines
-        allow_patterns = [
-            r'^\s*●',             # Bullet points
+        in_bullet_mode = False
+        
+        # Regex patterns for INTERACTIVE items (Prompts, Menus)
+        # These are always kept to ensure the bot can be used
+        interactive_patterns = [
             r'^\s*❯',             # Input prompts
             r'^\s*\d+\.',         # Menu options (1. Option)
             r'^\s*Do you want to proceed', # Interaction
-            r'^\s*Error:',        # Errors
-            r'^\s*Warning:',      # Warnings
         ]
         
         for line in lines:
-            line_str = line.rstrip()
-            if not line_str:
+            # Don't strip indentation yet, we need it to detect wrapping
+            line_content = line.strip() 
+            if not line_content:
+                continue
+            
+            is_interactive = any(re.search(p, line) for p in interactive_patterns)
+            
+            if is_interactive:
+                relevant_lines.append(line_content)
+                in_bullet_mode = False # Reset bullet mode
                 continue
                 
-            is_relevant = False
-            # Check if line matches allowed patterns
-            for pattern in allow_patterns:
-                if re.search(pattern, line_str):
-                    is_relevant = True
-                    break
-            
-            if is_relevant:
-                # User request: "send me just what is after the symbol ●"
-                # If it's a bullet point, strip the bullet and leading space
-                if '●' in line_str:
-                    clean_line = re.sub(r'^\s*●\s*', '', line_str)
-                    relevant_lines.append(clean_line)
+            # Check for bullet point start
+            if '●' in line:
+                # Start of a new message
+                clean_line = re.sub(r'^\s*●\s*', '', line).strip()
+                relevant_lines.append(clean_line)
+                in_bullet_mode = True # Use indentation to track continuation
+                continue
+                
+            # Check for continuation of bullet point
+            # Logic: If we are in bullet mode, and the line is indented relative to the margin
+            # (or just has some indent) and doesn't look like a new separate thing?
+            # User example:
+            # ● Voy a leer...
+            #   unitaria.
+            # "  unitaria." has leading spaces.
+            if in_bullet_mode:
+                # Check for indentation (at least 2 spaces?)
+                if line.startswith('  '):
+                     relevant_lines.append(line_content)
+                     continue
                 else:
-                    relevant_lines.append(line_str)
+                    # Not indented? might be end of message.
+                    # But checking exact indentation is tricky.
+                    # Let's assume ANY non-empty line that isn't interactive is part of the message?
+                    # No, that brings back garbage.
+                    # Strict indentation check:
+                    in_bullet_mode = False
+            
+            # If we get here, the line is skipped (Garbage/Context/Headers)
                 
         return '\n'.join(relevant_lines)
