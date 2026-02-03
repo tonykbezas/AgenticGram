@@ -1,5 +1,5 @@
 """
-PTY Handler for AgenticGram
+PTY Wrapper for AgenticGram
 Manages pseudo-terminal execution for capturing interactive CLI programs.
 """
 
@@ -16,17 +16,12 @@ from typing import Callable, Dict, Any, List, Optional
 logger = logging.getLogger(__name__)
 
 
-class PTYHandler:
+class PTYWrapper:
     """Handles PTY-based subprocess execution with ANSI parsing and interactive prompts."""
     
     def __init__(self):
         """Initialize PTY handler."""
-        # Regex to match ANSI escape codes
         # Regex to match ANSI escape codes including OSC sequences
-        # Matches:
-        # 1. CSI and Fe: \x1B[...] or \x1B...
-        # 2. OSC: \x1B] ... \x07 or \x1B] ... \x1B\
-        # 3. DCS/PM/APC: \x1B[PX^_] ... \x1B\
         self.ansi_escape = re.compile(
             r'(?:\x1B\]|\x9D).*?(?:\x1B\\|\x07)'  # OSC
             r'|(?:\x1B\[|\x9B)[0-?]*[ -/]*[@-~]'  # CSI
@@ -85,24 +80,22 @@ class PTYHandler:
             return ""
             
         # Remove Claude Code header box (╭─── Claude Code ... ╰───...╯)
-        # Matches top border, content, and bottom border
         text = re.sub(r'╭─── Claude Code.*?╰[─\s]*╯\s*', '', text, flags=re.DOTALL)
         
         # Remove standalone TUI lines that are just borders
-        # Matches lines that are just │ or vertical bars with whitespace
         text = re.sub(r'^\s*│\s*$', '', text, flags=re.MULTILINE)
         
         # Remove "blob data" markers from logs if they leaked into output
         text = re.sub(r'\[\d+B blob data\]', '', text)
         
-        # Remove multiple empty lines specifically caused by TUI cleanup
+        # Remove multiple empty lines
         text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text
     
     def _is_animation_frame(self, text: str) -> bool:
         """
-        Detect if text is just an animation frame (loading spinner, etc.).
+        Detect if text is just an animation frame.
         
         Args:
             text: Text to check
@@ -118,11 +111,11 @@ class PTYHandler:
             if re.search(pattern, text):
                 return True
         
-        # Check if mostly special characters (animation)
+        # Check if mostly special characters
         clean = re.sub(r'[\s\n\r]', '', text)
         if len(clean) > 0:
             special_chars = len(re.findall(r'[✻✶*✢·●✽⠂⠐⠁⠈⠄⠠]', clean))
-            if special_chars / len(clean) > 0.5:  # More than 50% animation chars
+            if special_chars / len(clean) > 0.5:
                 return True
         
         return False
@@ -141,7 +134,6 @@ class PTYHandler:
         options = []
         
         for line in lines:
-            # Match patterns like "❯ 1. Yes" or "   2. No"
             match = re.match(r'^\s*[❯\s]*\s*(\d+)\.\s+(.+?)\s*$', line)
             if match:
                 number = match.group(1)
@@ -167,19 +159,15 @@ class PTYHandler:
         if not text:
             return False
         
-        # Must have been idle for at least 1 second to avoid false positives
         if idle_time < 1.0:
             return False
         
-        # Check for prompt indicators
         for indicator in self.prompt_indicators:
             if indicator in text:
                 return True
         
-        # Check for numbered menu options (1., 2., etc.)
         lines = text.strip().split('\n')
         if len(lines) >= 2:
-            # Look for pattern like "1. Option" and "2. Option"
             has_numbered_options = any(
                 re.match(r'^\s*\d+\.\s+', line) for line in lines[-3:]
             )
@@ -225,7 +213,7 @@ class PTYHandler:
                 stderr=slave_fd,
                 cwd=cwd,
                 close_fds=True,
-                preexec_fn=os.setsid  # Create new session
+                preexec_fn=os.setsid
             )
             
             # Parent doesn't need slave fd
@@ -238,12 +226,11 @@ class PTYHandler:
             clean_output = ""
             last_output_time = time.time()
             last_callback_time = 0
-            CALLBACK_INTERVAL = 0.5  # Stream updates every 0.5 seconds
+            CALLBACK_INTERVAL = 0.5
             
             start_time = time.time()
             
             while True:
-                # Check timeout
                 if time.time() - start_time > timeout:
                     logger.warning(f"Command timed out after {timeout} seconds")
                     process.kill()
@@ -253,12 +240,10 @@ class PTYHandler:
                         "error": f"Timed out after {timeout} seconds"
                     }
                 
-                # Check if process finished
                 if process.poll() is not None:
                     logger.info(f"Process finished with return code {process.returncode}")
                     break
                 
-                # Non-blocking read with timeout
                 ready, _, _ = select.select([master_fd], [], [], 0.1)
                 
                 if ready:
@@ -268,50 +253,39 @@ class PTYHandler:
                             logger.debug("EOF reached on PTY")
                             break
                         
-                        # Decode data
                         text = data.decode('utf-8', errors='replace')
                         output_buffer += text
                         
-                        # Strip ANSI codes for clean text
                         clean_text = self.strip_ansi(output_buffer)
                         clean_output = clean_text
                         
                         last_output_time = time.time()
                         
-                        # Log output (show actual text, not blob)
                         logger.info(f"PTY output ({len(clean_text)} chars): {clean_text[:200]}")
                         
                     except OSError as e:
                         logger.error(f"Error reading from PTY: {e}")
                         break
                 
-                # Check for prompts (only if we have a callback)
                 if prompt_callback:
                     idle_time = time.time() - last_output_time
                     
                     if self._is_prompt(clean_output, idle_time):
                         logger.info(f"Detected interactive prompt: {clean_output[-200:]}")
-                        
-                        # Call prompt callback
                         try:
                             response = await prompt_callback(clean_output)
-                            
                             if response:
                                 logger.info(f"Sending response to prompt: {response.strip()}")
                                 os.write(master_fd, response.encode())
-                                
-                                # Clear buffer after responding
                                 output_buffer = ""
                                 clean_output = ""
                                 last_output_time = time.time()
                         except Exception as e:
                             logger.error(f"Error in prompt callback: {e}", exc_info=True)
                 
-                # Stream output callback (skip animation frames)
                 if output_callback and clean_output:
                     current_time = time.time()
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
-                        # Only send if it's not just an animation frame
                         if not self._is_animation_frame(clean_output):
                             try:
                                 await output_callback(clean_output)
@@ -321,40 +295,29 @@ class PTYHandler:
                         else:
                             logger.debug("Skipping animation frame")
                 
-                # Small sleep to avoid busy waiting
                 await asyncio.sleep(0.05)
             
-            # Read any remaining output
             try:
                 while True:
                     ready, _, _ = select.select([master_fd], [], [], 0.1)
-                    if not ready:
-                        break
+                    if not ready: break
                     data = os.read(master_fd, 4096)
-                    if not data:
-                        break
+                    if not data: break
                     text = data.decode('utf-8', errors='replace')
                     output_buffer += text
                     clean_output = self.strip_ansi(output_buffer)
             except:
                 pass
             
-            # Final output callback
             if output_callback and clean_output:
                 try:
                     await output_callback(clean_output)
                 except:
                     pass
             
-            # Check return code
             returncode = process.wait(timeout=5)
             success = (returncode == 0)
             
-            # Log final output
-            logger.info(f"Command finished with return code {returncode}")
-            logger.info(f"Final output ({len(clean_output)} chars): {clean_output[:500]}")
-            
-            # If failed, include output in error field
             if not success:
                 return {
                     "success": False,
@@ -378,7 +341,6 @@ class PTYHandler:
             }
             
         finally:
-            # Cleanup
             if master_fd is not None:
                 try:
                     os.close(master_fd)

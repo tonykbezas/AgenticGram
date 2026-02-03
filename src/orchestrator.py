@@ -8,9 +8,9 @@ import uuid
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
-from .claude_handler import ClaudeHandler
+from src.claude.claude_client import ClaudeClient
 from .openrouter_handler import OpenRouterHandler
-from .session_manager import SessionManager, PermissionRequest
+from src.claude.session_manager import SessionManager, PermissionRequest
 
 
 logger = logging.getLogger(__name__)
@@ -34,12 +34,12 @@ class Orchestrator:
             claude_code_path: Optional custom path to Claude CLI executable
         """
         self.session_manager = session_manager
-        self.claude_handler = ClaudeHandler(claude_path=claude_code_path)
+        self.claude_client = ClaudeClient(claude_path=claude_code_path)
         self.openrouter_handler = OpenRouterHandler(openrouter_api_key) if openrouter_api_key else None
         self.permission_callback: Optional[Callable] = None
         
         # Set up Claude handler permission callback
-        self.claude_handler.set_permission_callback(self._permission_callback_wrapper)
+        self.claude_client.set_permission_callback(self._permission_callback_wrapper)
     
     async def check_claude_availability(self) -> bool:
         """
@@ -48,7 +48,7 @@ class Orchestrator:
         Returns:
             True if available, False otherwise
         """
-        return await self.claude_handler.check_availability()
+        return await self.claude_client.check_availability()
     
     async def check_openrouter_availability(self) -> bool:
         """
@@ -138,10 +138,11 @@ class Orchestrator:
             
             if claude_available:
                 logger.info("Using Claude Code CLI")
-                result = await self.claude_handler.execute_command(
+                result = await self.claude_client.execute_command(
                     instruction=instruction,
                     work_dir=session.work_dir,
-                    output_callback=output_callback
+                    output_callback=output_callback,
+                    permission_context={"chat_id": chat_id}
                 )
                 
                 # Check if we should fallback to OpenRouter
