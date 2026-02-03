@@ -457,11 +457,10 @@ class PTYWrapper:
     def _filter_relevant_lines(self, text: str) -> str:
         """
         Keep only lines that are likely important to the user:
-        - Bullet points (●)
-        - Prompts (❯)
-        - Menu options (1. Yes)
-        - Specific headers (Read file, Search, Create file)
-        - The line IMMEDIATELY following a "header" (for filenames)
+        - Bullet points (●) -> Send content AFTER the bullet
+        - Prompts (❯) -> Keep for interaction
+        - Menu options (1. Yes) -> Keep for interaction
+        - Questions/Errors
         """
         if not text:
             return ""
@@ -475,55 +474,29 @@ class PTYWrapper:
             r'^\s*❯',             # Input prompts
             r'^\s*\d+\.',         # Menu options (1. Option)
             r'^\s*Do you want to proceed', # Interaction
-            r'^\s*Read file',     # Context headers
-            r'^\s*Create file',   # Context headers (new)
-            r'^\s*Search\(',      # Search context
             r'^\s*Error:',        # Errors
             r'^\s*Warning:',      # Warnings
         ]
         
-        # Headers that imply the NEXT line is also relevant (e.g. filename)
-        context_headers = [
-            r'^\s*Read file',
-            r'^\s*Create file',
-        ]
-        
-        keep_next_line = False
-        
         for line in lines:
             line_str = line.rstrip()
             if not line_str:
-                # Reset context on empty lines IF we were waiting for a filename? 
-                # Actually, usually there is no empty line between Header and Filename.
-                # But if there is, we might lose it. Let's assume strict adjacency.
                 continue
                 
             is_relevant = False
-            
-            # 1. Check if line is explicitly allowed
+            # Check if line matches allowed patterns
             for pattern in allow_patterns:
                 if re.search(pattern, line_str):
                     is_relevant = True
-                    # Check if this is a header that needs the next line
-                    for header in context_headers:
-                        if re.search(header, line_str):
-                            keep_next_line = True
                     break
             
-            # 2. Check if this line was "requested" by the previous line
-            if not is_relevant and keep_next_line:
-                is_relevant = True
-                keep_next_line = False # Reset immediately (only keep 1 line)
-            elif keep_next_line and is_relevant:
-                # If it was already relevant (e.g. starts with ●), we still reset the flag
-                keep_next_line = False
-            
             if is_relevant:
-                relevant_lines.append(line_str)
-            else:
-                # Ensure flag is reset if we skip a line (safety)
-                # Actually, if we skip a line, should we reset? 
-                # Yes, because "Context" implies immediate adjacency.
-                keep_next_line = False
+                # User request: "send me just what is after the symbol ●"
+                # If it's a bullet point, strip the bullet and leading space
+                if '●' in line_str:
+                    clean_line = re.sub(r'^\s*●\s*', '', line_str)
+                    relevant_lines.append(clean_line)
+                else:
+                    relevant_lines.append(line_str)
                 
         return '\n'.join(relevant_lines)
