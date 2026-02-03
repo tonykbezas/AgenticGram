@@ -98,14 +98,21 @@ class PTYWrapper:
         text = re.sub(r'\[\d+B blob data\]', '', text)
         
         # 6. Clean up excessive newlines
-        # We reduce 3+ newlines to 2 to preserve paragraph structure but remove huge gaps
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        # We reduce 3+ newlines (possibly with spaces) to 2
+        text = re.sub(r'\n\s*\n\s*\n+', '\n\n', text)
         
         # 7. Remove non-printable characters (fixes "2B blob data" in logs)
         # Keeps newlines (\n), carriage returns (\r), and tabs (\t)
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
         
-        logger.info(f"Cleaned text: {text}")
+        # DEBUG: Dump to file to inspect actual content
+        try:
+            with open("debug_pty_artifacts.txt", "a", encoding="utf-8") as f:
+                f.write(f"\n--- CHUNK {time.time()} ---\n{ascii(text)}\n")
+        except Exception as e:
+            logger.error(f"Failed to write debug file: {e}")
+
+        logger.info(f"Cleaned text: {text!r}")
         return text
     
     def _is_animation_frame(self, text: str) -> bool:
