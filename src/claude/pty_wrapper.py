@@ -79,16 +79,26 @@ class PTYWrapper:
         if not text:
             return ""
             
-        # Remove Claude Code header box (╭─── Claude Code ... ╰───...╯)
+        # 1. Remove Claude Code header box (╭─── Claude Code ... ╰───...╯)
         text = re.sub(r'╭─── Claude Code.*?╰[─\s]*╯\s*', '', text, flags=re.DOTALL)
         
-        # Remove standalone TUI lines that are just borders
+        # 2. Remove decorative lines (from user suggestion)
+        # Matches sequences of 2 or more decorative characters
+        text = re.sub(r'─{2,}|━{2,}|═{2,}|={2,}|-{2,}', '', text)
+        
+        # 3. Remove "noise" characters (spinners, blocks, etc.)
+        # Note: We keep some structure chars but remove the specific noise ones for now
+        # Added from user suggestion: ✶, ✻, ✽, ✢, ▐, ▛, ▜, ▌, ▝, ❯
+        text = re.sub(r'[✶✻✽✢·●▐▛▜▌▝❯✢]', '', text)
+        
+        # 4. Remove standalone TUI lines that are just borders (failsafe)
         text = re.sub(r'^\s*│\s*$', '', text, flags=re.MULTILINE)
         
-        # Remove "blob data" markers from logs if they leaked into output
+        # 5. Remove "blob data" markers from logs if they leaked into output
         text = re.sub(r'\[\d+B blob data\]', '', text)
         
-        # Remove multiple empty lines
+        # 6. Clean up excessive newlines
+        # We reduce 3+ newlines to 2 to preserve paragraph structure but remove huge gaps
         text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text
