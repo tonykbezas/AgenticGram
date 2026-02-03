@@ -82,6 +82,10 @@ class PTYWrapper:
         if not text:
             return ""
             
+        # 0. Handle backspaces FIRST (before stripping ANSI or other chars)
+        # This fixes "garbled" text where characters should have been deleted
+        text = self._process_backspaces(text)
+
         # 1. Remove Claude Code header box (╭─── Claude Code ... ╰───...╯)
         text = re.sub(r'╭─── Claude Code.*?╰[─\s]*╯\s*', '', text, flags=re.DOTALL)
         
@@ -107,6 +111,7 @@ class PTYWrapper:
         
         # 7. Remove non-printable characters (fixes "2B blob data" in logs)
         # Keeps newlines (\n), carriage returns (\r), and tabs (\t)
+        # NOTE: We handled \b specifically above, now we can strip other controls
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
         
         # 8. Handle carriage returns to fix "duplicate" lines from animations
@@ -133,6 +138,23 @@ class PTYWrapper:
 
         logger.info(f"Cleaned text: {text[:100]!r}...")
         return text
+
+    def _process_backspaces(self, text: str) -> str:
+        """
+        Apply backspace characters (\x08) to delete preceding characters.
+        """
+        if '\x08' not in text:
+            return text
+            
+        chars = list(text)
+        result = []
+        for char in chars:
+            if char == '\x08':
+                if result:
+                    result.pop()
+            else:
+                result.append(char)
+        return "".join(result)
 
     def _process_carriage_returns(self, text: str) -> str:
         """
