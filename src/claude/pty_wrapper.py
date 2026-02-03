@@ -335,21 +335,16 @@ class PTYWrapper:
                 
                 if output_callback and clean_output:
                     current_time = time.time()
-                    # Only send if enough time passed AND content is different
+                    # Only send if enough time passed
                     if current_time - last_callback_time >= CALLBACK_INTERVAL:
-                        if clean_output != last_sent_output:
-                            if not self._is_animation_frame(clean_output):
-                                try:
-                                    await output_callback(clean_output)
-                                    last_callback_time = current_time
-                                    last_sent_output = clean_output  # Update cache
-                                except Exception as e:
-                                    logger.error(f"Error in output callback: {e}")
-                            else:
-                                logger.debug("Skipping animation frame")
+                        if not self._is_animation_frame(clean_output):
+                            try:
+                                await output_callback(clean_output)
+                                last_callback_time = current_time
+                            except Exception as e:
+                                logger.error(f"Error in output callback: {e}")
                         else:
-                            # Content hasn't changed, skip callback
-                            pass
+                            logger.debug("Skipping animation frame")
             
             try:
                 while True:
