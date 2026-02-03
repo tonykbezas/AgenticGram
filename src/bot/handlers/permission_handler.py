@@ -51,6 +51,12 @@ class PermissionHandler:
         try:
             # Format permission message
             raw_description = details.get('description', 'Unknown action')
+            
+            # Truncate if too long (Telegram limit is 4096, but we add wrapper text)
+            MAX_DESC_LENGTH = 3000
+            if len(raw_description) > MAX_DESC_LENGTH:
+                raw_description = raw_description[:MAX_DESC_LENGTH] + "\n... [Truncated]"
+            
             description = escape_markdown(raw_description)
             
             # Create message and keyboard (Logic copied from original bot.py)
