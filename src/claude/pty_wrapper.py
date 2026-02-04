@@ -283,7 +283,8 @@ class PTYWrapper:
         cwd: str,
         prompt_callback: Optional[Callable[[str], Any]] = None,
         output_callback: Optional[Callable[[str], Any]] = None,
-        timeout: int = 1800
+        timeout: int = 1800,
+        env_vars: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute command in a PTY and handle interactive prompts.
@@ -306,6 +307,11 @@ class PTYWrapper:
             master_fd, slave_fd = pty.openpty()
             logger.info(f"Created PTY for command: {' '.join(command)}")
             
+            # Prepare environment
+            env = os.environ.copy()
+            if env_vars:
+                env.update(env_vars)
+
             # Start process with PTY
             process = subprocess.Popen(
                 command,
@@ -313,6 +319,7 @@ class PTYWrapper:
                 stdout=slave_fd,
                 stderr=slave_fd,
                 cwd=cwd,
+                env=env,
                 close_fds=True,
                 preexec_fn=os.setsid
             )

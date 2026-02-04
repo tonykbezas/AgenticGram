@@ -7,7 +7,7 @@ import logging
 import asyncio
 import uuid
 from typing import Dict, Any, Optional, Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.claude.claude_client import ClaudeClient
 from .openrouter_handler import OpenRouterHandler
@@ -24,7 +24,8 @@ class Orchestrator:
         self,
         session_manager: SessionManager,
         openrouter_api_key: Optional[str] = None,
-        claude_code_path: Optional[str] = None
+        claude_code_path: Optional[str] = None,
+        notification_callback: Optional[Callable] = None
     ):
         """
         Initialize orchestrator.
@@ -33,14 +34,20 @@ class Orchestrator:
             session_manager: SessionManager instance
             openrouter_api_key: Optional OpenRouter API key for fallback
             claude_code_path: Optional custom path to Claude CLI executable
+            notification_callback: Async callback for sending notifications
         """
         self.session_manager = session_manager
         self.claude_client = ClaudeClient(claude_path=claude_code_path)
         self.openrouter_handler = OpenRouterHandler(openrouter_api_key) if openrouter_api_key else None
+        self.notification_callback = notification_callback
         self.permission_callback: Optional[Callable] = None
 
         # Track active executions per user for cancellation
         self._active_tasks: Dict[int, asyncio.Task] = {}
+        
+        # Rate limit tracking
+        self.rate_limit_until: Optional[datetime] = None
+        self.rate_limit_task: Optional[asyncio.Task] = None
 
         # Set up Claude handler permission callback
         self.claude_client.set_permission_callback(self._permission_callback_wrapper)
@@ -172,6 +179,12 @@ class Orchestrator:
         # specific fallback model if needed
         fallback_model = None
 
+        # Check if we are currently rate limited
+        if self.rate_limit_until and datetime.now() < self.rate_limit_until:
+             logger.info(f"Rate limit active until {self.rate_limit_until}, skipping Claude check")
+             force_openrouter = True
+             fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
+
         # Try Claude Code first (unless forced to use OpenRouter)
         if not force_openrouter:
             claude_available = await self.check_claude_availability()
@@ -224,6 +237,15 @@ class Orchestrator:
                         logger.warning("Claude Code quota exceeded, falling back to OpenRouter (Qwen)")
                         force_openrouter = True
                         fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
+                        
+                        # Set rate limit cooldown (4 hours)
+                        self.rate_limit_until = datetime.now() + timedelta(hours=4)
+                        
+                        # Schedule notification task
+                        if self.notification_callback:
+                            if self.rate_limit_task and not self.rate_limit_task.done():
+                                self.rate_limit_task.cancel()
+                            self.rate_limit_task = asyncio.create_task(self._wait_for_rate_limit_reset(telegram_id))
                     else:
                         # Return Claude error
                         return {
@@ -232,31 +254,67 @@ class Orchestrator:
                             "session_id": session.session_id
                         }
         
-        # Fallback to OpenRouter
-        if force_openrouter or not await self.check_claude_availability():
-            if not self.openrouter_handler:
-                return {
-                    "success": False,
-                    "output": "",
-                    "error": "Claude Code unavailable and OpenRouter not configured",
-                    "backend": "none"
+            if fallback_model:
+                # Use Claude CLI with OpenRouter configuration (preserving orchestrator capabilities)
+                logger.info(f"Falling back to Claude CLI with OpenRouter model: {fallback_model}")
+                
+                # Configure environment for OpenRouter
+                openrouter_env = {
+                    "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
+                    "ANTHROPIC_API_KEY": self.openrouter_api_key,
+                    "OPENROUTER_HTTP_REFERER": "https://github.com/AgenticGram/universal-ai-cli-bot",
+                    "X-TITLE": "AgenticGram Bot"
                 }
-            
-            openrouter_available = await self.check_openrouter_availability()
-            if not openrouter_available:
-                return {
-                    "success": False,
-                    "output": "",
-                    "error": "Both Claude Code and OpenRouter are unavailable",
-                    "backend": "none"
-                }
-            
-            logger.info(f"Using OpenRouter API ({fallback_model or 'default'})")
-            result = await self.openrouter_handler.execute_instruction(
-                instruction=instruction,
-                model=fallback_model,
-                system_prompt="You are a helpful AI coding assistant. Provide clear, concise responses."
-            )
+
+                if session.bypass_mode:
+                    result = await self.claude_client.execute_with_pipes(
+                        instruction=instruction,
+                        work_dir=session.work_dir,
+                        output_callback=output_callback,
+                        model=fallback_model,
+                        continue_conversation=continue_conversation,
+                        env_vars=openrouter_env
+                    )
+                else:
+                    result = await self.claude_client.execute_command(
+                        instruction=instruction,
+                        work_dir=session.work_dir,
+                        output_callback=output_callback,
+                        permission_context={"chat_id": chat_id},
+                        model=fallback_model,
+                        continue_conversation=continue_conversation,
+                        env_vars=openrouter_env
+                    )
+                
+                # Tag backend for clarity
+                result["backend"] = f"claude_cli_openrouter_{fallback_model.split('/')[-1]}"
+                return result
+
+            else:
+                # Standard OpenRouter Fallback (legacy/chat only)
+                if not self.openrouter_handler:
+                    return {
+                        "success": False,
+                        "output": "",
+                        "error": "Claude Code unavailable and OpenRouter not configured",
+                        "backend": "none"
+                    }
+                
+                openrouter_available = await self.check_openrouter_availability()
+                if not openrouter_available:
+                    return {
+                        "success": False,
+                        "output": "",
+                        "error": "Both Claude Code and OpenRouter are unavailable",
+                        "backend": "none"
+                    }
+                
+                logger.info("Using OpenRouter API (legacy chat mode)")
+                result = await self.openrouter_handler.execute_instruction(
+                    instruction=instruction,
+                    system_prompt="You are a helpful AI coding assistant. Provide clear, concise responses."
+                )
+                return result
             
             return {
                 **result,
@@ -288,6 +346,38 @@ class Orchestrator:
             return True
         return False
     
+    async def _wait_for_rate_limit_reset(self, telegram_id: int) -> None:
+        """
+        Wait for rate limit to expire and notify user.
+        
+        Args:
+            telegram_id: User to notify
+        """
+        try:
+            if not self.rate_limit_until:
+                return
+
+            wait_seconds = (self.rate_limit_until - datetime.now()).total_seconds()
+            if wait_seconds > 0:
+                logger.info(f"Scheuling rate limit notification in {wait_seconds} seconds")
+                await asyncio.sleep(wait_seconds)
+            
+            # Reset rate limit
+            self.rate_limit_until = None
+            
+            # Notify user
+            if self.notification_callback:
+                await self.notification_callback(
+                    telegram_id, 
+                    "✅ **Claude Code quota has likely reset.**\n\nRestoring priority to Claude 3.5 Sonnet."
+                )
+                
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in rate limit waiter: {e}")
+            self.rate_limit_until = None
+
     async def cleanup(self) -> None:
         """Clean up resources."""
         if self.openrouter_handler:

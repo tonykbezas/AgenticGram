@@ -76,7 +76,8 @@ class ClaudeClient:
         timeout: int = 1800,
         permission_context: Dict[str, Any] = None,
         model: str = "sonnet",
-        continue_conversation: bool = True
+        continue_conversation: bool = True,
+        env_vars: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute a command via Claude Code CLI with PTY.
@@ -118,7 +119,8 @@ class ClaudeClient:
                 cwd=work_dir,
                 prompt_callback=scoped_prompt_handler,
                 output_callback=output_callback,
-                timeout=timeout
+                timeout=timeout,
+                env_vars=env_vars
             )
             logger.info(f"Tonyy: {result}")
             if result["success"]:
@@ -222,7 +224,8 @@ class ClaudeClient:
         output_callback: Optional[Callable[[str], Any]] = None,
         timeout: int = 1800,
         model: str = "sonnet",
-        continue_conversation: bool = True
+        continue_conversation: bool = True,
+        env_vars: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute command via Claude Code CLI using pipes (bypass mode).
@@ -261,6 +264,11 @@ class ClaudeClient:
 
             logger.info(f"Executing Claude CLI with pipes (bypass mode) in {work_dir}")
 
+            # Prepare environment
+            env = os.environ.copy()
+            if env_vars:
+                env.update(env_vars)
+
             # Create subprocess with larger buffer limit (16MB instead of default 64KB)
             # This prevents LimitOverrunError for large Claude outputs
             process = await asyncio.create_subprocess_exec(
@@ -268,6 +276,7 @@ class ClaudeClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=work_dir,
+                env=env,
                 limit=16 * 1024 * 1024  # 16MB buffer limit
             )
 
