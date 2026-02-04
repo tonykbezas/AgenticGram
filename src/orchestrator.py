@@ -105,7 +105,8 @@ class Orchestrator:
         telegram_id: int,
         chat_id: int,
         output_callback: Optional[Callable] = None,
-        force_openrouter: bool = False
+        force_openrouter: bool = False,
+        continue_conversation: bool = True
     ) -> Dict[str, Any]:
         """
         Execute a command using available AI backend.
@@ -139,21 +140,23 @@ class Orchestrator:
             if claude_available:
                 # Check if bypass mode is enabled
                 if session.bypass_mode:
-                    logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}")
+                    logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}, continue: {continue_conversation}")
                     result = await self.claude_client.execute_with_pipes(
                         instruction=instruction,
                         work_dir=session.work_dir,
                         output_callback=output_callback,
-                        model=session.model
+                        model=session.model,
+                        continue_conversation=continue_conversation
                     )
                 else:
-                    logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}")
+                    logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}, continue: {continue_conversation}")
                     result = await self.claude_client.execute_command(
                         instruction=instruction,
                         work_dir=session.work_dir,
                         output_callback=output_callback,
                         permission_context={"chat_id": chat_id},
-                        model=session.model
+                        model=session.model,
+                        continue_conversation=continue_conversation
                     )
 
                 # Check if we should fallback to OpenRouter

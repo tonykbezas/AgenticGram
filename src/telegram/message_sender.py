@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 class MessageSender:
     """Handles streaming message updates with debouncing, formatting, and splitting."""
-    
+
     def __init__(self, status_message: Message):
         """
         Initialize message sender.
-        
+
         Args:
             status_message: The initial Telegram message to edit
         """
@@ -28,11 +28,52 @@ class MessageSender:
         self.EDIT_COOLDOWN = 1.0  # Increased debounce for multi-message handling
         self.Thinking_chars = set("✢*✶✻✽·●")
         self.message_chain: List[Message] = [status_message]
+
+        # Thinking animation state
+        self._thinking_task: Optional[asyncio.Task] = None
+        self._has_content = False
+        self._dot_count = 1
+
+    async def start_thinking_animation(self) -> None:
+        """Start the thinking animation loop."""
+        self._has_content = False
+        self._dot_count = 1
+        self._thinking_task = asyncio.create_task(self._animate_thinking())
+
+    async def _animate_thinking(self) -> None:
+        """Animate 'Claude thinking.' -> '..' -> '...' in a loop."""
+        try:
+            while not self._has_content:
+                dots = "." * self._dot_count
+                thinking_text = f"🤖 *Claude thinking{dots}*"
+
+                try:
+                    await self.status_message.edit_text(
+                        thinking_text,
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    if "Message is not modified" not in str(e):
+                        logger.debug(f"Thinking animation edit failed: {e}")
+
+                self._dot_count = (self._dot_count % 3) + 1  # Cycle 1 -> 2 -> 3 -> 1
+                await asyncio.sleep(0.8)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"Thinking animation error: {e}")
+
+    def stop_thinking_animation(self) -> None:
+        """Stop the thinking animation."""
+        self._has_content = True
+        if self._thinking_task and not self._thinking_task.done():
+            self._thinking_task.cancel()
         
     async def update_stream(self, output: str) -> None:
         """
         Update message with streamed output.
-        
+
         Args:
             output: Current accumulated output
         """
@@ -42,54 +83,60 @@ class MessageSender:
         try:
             # Clean output body
             clean_body = re.sub(
-                r'^\s*[✢*✶✻✽·●]\s*$', 
-                '', 
-                output, 
+                r'^\s*[✢*✶✻✽·●]\s*$',
+                '',
+                output,
                 flags=re.MULTILINE
-            )
-            
+            ).strip()
+
             # Check thinking state
             raw_tail = output.strip().split('\n')[-1].strip() if output.strip() else ""
             is_thinking = len(raw_tail) == 1 and raw_tail in self.Thinking_chars
-            
+
+            # If we have real content, stop the thinking animation
+            if clean_body and len(clean_body) > 5:
+                self.stop_thinking_animation()
+
             # Rate limiting
             current_time = time.time()
             if current_time - self.last_edit_time < self.EDIT_COOLDOWN:
-                 return
+                return
 
             self.update_count += 1
             self.last_edit_time = current_time
-            
+
             # Prepare formatted body
             formatted_body = self._format_output(clean_body, is_thinking, raw_tail)
-            
+
             # Split into chunks if needed
             chunks = split_message(formatted_body, MAX_MESSAGE_LENGTH)
-            
+
             # Update messages
             await self._update_message_chain(chunks)
-        
+
         except Exception as e:
             logger.error(f"Error in stream update: {e}")
             
     def _format_output(self, body: str, is_thinking: bool, spinner: str) -> str:
         """Format the output string before splitting."""
         escaped_body = escape_markdown(body.strip())
-        
+
+        # Determine dots based on update count for animation effect
+        dots = "." * ((self.update_count % 3) + 1)
+
         if is_thinking:
             if len(escaped_body) < 10:
-                header = escape_markdown("🤖 Claude is thinking... ")
-                return f"*{header}*{spinner}"
-            else:
-                header = escape_markdown("🤖 Claude is working...\n\n")
-                footer = escape_markdown("Thinking ")
-                return f"*{header}*```\n{escaped_body}\n```\n\n_{footer}{spinner}_"
-        else:
-            if not escaped_body:
-                header = escape_markdown("🤖 Claude is working...")
+                header = escape_markdown(f"🤖 Claude thinking{dots}")
                 return f"*{header}*"
             else:
-                header = escape_markdown("🤖 Claude is working...\n\n")
+                header = escape_markdown(f"🤖 Claude thinking{dots}\n\n")
+                return f"*{header}*```\n{escaped_body}\n```"
+        else:
+            if not escaped_body:
+                header = escape_markdown(f"🤖 Claude thinking{dots}")
+                return f"*{header}*"
+            else:
+                header = escape_markdown(f"🤖 Claude responding{dots}\n\n")
                 return f"*{header}*```\n{escaped_body}\n```"
 
     async def _update_message_chain(self, chunks: List[str]) -> None:
@@ -114,6 +161,9 @@ class MessageSender:
     
     async def send_final(self, result: dict, instruction: str = "Claude Code Output") -> None:
         """Send final completion message."""
+        # Stop thinking animation
+        self.stop_thinking_animation()
+
         logger.info(f"Sending final result: {result}")
         if result["success"]:
             output = result["output"]

@@ -75,7 +75,8 @@ class ClaudeClient:
         output_callback: Optional[Callable[[str], Any]] = None,
         timeout: int = 1800,
         permission_context: Dict[str, Any] = None,
-        model: str = "sonnet"
+        model: str = "sonnet",
+        continue_conversation: bool = True
     ) -> Dict[str, Any]:
         """
         Execute a command via Claude Code CLI with PTY.
@@ -87,6 +88,7 @@ class ClaudeClient:
             timeout: Command timeout in seconds
             permission_context: Optional context to pass to permission callback (e.g. chat_id)
             model: Claude model to use (sonnet, opus, haiku, or full name)
+            continue_conversation: Whether to continue previous conversation in this directory
 
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
@@ -97,8 +99,13 @@ class ClaudeClient:
             command = [
                 self.claude_path,
                 "--model", model,
-                instruction
             ]
+
+            # Add --continue to maintain conversation context
+            if continue_conversation:
+                command.append("--continue")
+
+            command.append(instruction)
             
             logger.info(f"Executing Claude CLI with PTY in {work_dir}")
             
@@ -214,7 +221,8 @@ class ClaudeClient:
         work_dir: str,
         output_callback: Optional[Callable[[str], Any]] = None,
         timeout: int = 1800,
-        model: str = "sonnet"
+        model: str = "sonnet",
+        continue_conversation: bool = True
     ) -> Dict[str, Any]:
         """
         Execute command via Claude Code CLI using pipes (bypass mode).
@@ -228,6 +236,7 @@ class ClaudeClient:
             output_callback: Optional callback for streaming output
             timeout: Command timeout in seconds
             model: Claude model to use (sonnet, opus, haiku, or full name)
+            continue_conversation: Whether to continue previous conversation in this directory
 
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
@@ -242,8 +251,13 @@ class ClaudeClient:
                 "--permission-mode", "bypassPermissions",  # Skip all permission prompts
                 "--output-format", "stream-json",  # Structured streaming output
                 "--verbose",  # Required for stream-json
-                instruction
             ]
+
+            # Add --continue to maintain conversation context
+            if continue_conversation:
+                command.append("--continue")
+
+            command.append(instruction)
 
             logger.info(f"Executing Claude CLI with pipes (bypass mode) in {work_dir}")
 

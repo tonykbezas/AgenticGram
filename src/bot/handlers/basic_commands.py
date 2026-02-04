@@ -270,3 +270,22 @@ class BasicCommands:
                 parse_mode="Markdown"
             )
             logger.info(f"User {user_id} selected model: {model_id}")
+
+    async def new_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /new command - start a fresh conversation (no context)."""
+        if not await self.auth.check_auth(update, context):
+            return
+
+        user_id = update.effective_user.id
+
+        # Mark that next message should NOT use --continue
+        context.user_data['new_conversation'] = True
+
+        await update.message.reply_text(
+            "🆕 **New conversation started**\n\n"
+            "Your next message will start a fresh conversation without previous context.\n"
+            "Send your instruction now.",
+            parse_mode="Markdown"
+        )
+
+        logger.info(f"User {user_id} started new conversation")

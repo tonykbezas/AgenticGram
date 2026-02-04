@@ -40,25 +40,30 @@ class CodeCommands:
         
         # Send initial status message
         status_message = await update.message.reply_text(
-            "🤖 **Claude is working...**\n\n_Waiting for response..._",
-            parse_mode="Markdown"
+            "🤖 *Claude thinking\\.\\.\\.*",
+            parse_mode="MarkdownV2"
         )
-        
+
         logger.info(f"Executing code command for user {user_id}: {instruction[:50]}...")
-        
-        # Initialize MessageSender
+
+        # Initialize MessageSender and start thinking animation
         sender = MessageSender(status_message)
-        
+        await sender.start_thinking_animation()
+
         # Stream callback
         async def stream_callback(output: str):
             await sender.update_stream(output)
         
         try:
+            # Check if user requested new conversation
+            continue_conv = not context.user_data.pop('new_conversation', False)
+
             result = await self.orchestrator.execute_command(
                 instruction=instruction,
                 telegram_id=user_id,
                 chat_id=chat_id,
-                output_callback=stream_callback
+                output_callback=stream_callback,
+                continue_conversation=continue_conv
             )
 
             await sender.send_final(result, instruction=instruction)
