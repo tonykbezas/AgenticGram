@@ -136,7 +136,7 @@ class PTYWrapper:
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = text.strip()
 
-        logger.info(f"Cleaned text: {text[:100]!r}...")
+        logger.debug(f"Cleaned text: {text[:100]!r}...")
         return text
 
     def _process_backspaces(self, text: str) -> str:
@@ -376,7 +376,7 @@ class PTYWrapper:
                         # Log meaningful updates
                         if clean_text and len(clean_text.strip()) > 0:
                              # Use repr to show hidden chars, truncate for log clarity
-                             logger.info(f"PTY Update: {clean_text[:100]!r}...")
+                             logger.debug(f"PTY Update: {clean_text[:100]!r}...")
                         
                         last_output_time = time.time()
                         

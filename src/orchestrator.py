@@ -4,6 +4,7 @@ Manages command routing between Claude Code and OpenRouter.
 """
 
 import logging
+import asyncio
 import uuid
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
