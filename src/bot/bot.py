@@ -148,6 +148,12 @@ class AgenticGramBot:
 
         logger.info("Bot is running!")
 
+        # Keep running
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await self.shutdown()
+
     async def _setup_commands_menu(self) -> None:
         """Setup the bot commands menu in Telegram."""
         try:
@@ -155,12 +161,6 @@ class AgenticGramBot:
             logger.info("Bot commands menu configured")
         except Exception as e:
             logger.error(f"Failed to set bot commands: {e}")
-        
-        # Keep running
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await self.shutdown()
 
     async def _cleanup_task(self) -> None:
         """Periodic cleanup of old sessions."""
