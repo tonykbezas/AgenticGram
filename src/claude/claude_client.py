@@ -235,6 +235,7 @@ class ClaudeClient:
                 "-p",  # Print mode (non-interactive)
                 "--permission-mode", "bypassPermissions",  # Skip all permission prompts
                 "--output-format", "stream-json",  # Structured streaming output
+                "--verbose",  # Required for stream-json
                 instruction
             ]
 
