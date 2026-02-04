@@ -2,7 +2,7 @@
 import logging
 import asyncio
 from telegram.ext import Application, CommandHandler as TelegramCommandHandler, MessageHandler as TelegramMessageHandler, CallbackQueryHandler, filters, TypeHandler, ApplicationHandlerStop
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.request import HTTPXRequest
 
 from src.claude.session_manager import SessionManager
@@ -17,6 +17,17 @@ from src.bot.handlers.message_handler import MessageHandler as MyMessageHandler
 from src.bot.handlers.permission_handler import PermissionHandler
 
 logger = logging.getLogger(__name__)
+
+# Bot commands for Telegram menu
+BOT_COMMANDS = [
+    BotCommand("code", "Execute AI coding instruction"),
+    BotCommand("model", "Select Claude model"),
+    BotCommand("bypass", "Toggle bypass mode"),
+    BotCommand("browse", "Browse working directory"),
+    BotCommand("session", "Manage session"),
+    BotCommand("status", "Check backend status"),
+    BotCommand("help", "Show help"),
+]
 
 class AgenticGramBot:
     """Main bot class for AgenticGram."""
@@ -58,7 +69,7 @@ class AgenticGramBot:
         self.basic_commands = BasicCommands(self.auth_middleware, self.session_manager, self.orchestrator)
         self.code_commands = CodeCommands(self.auth_middleware, self.orchestrator)
         self.browser_commands = BrowserCommands(self.auth_middleware, self.directory_browser, self.session_manager)
-        self.message_handler = MyMessageHandler(self.auth_middleware, self.session_manager)
+        self.message_handler = MyMessageHandler(self.auth_middleware, self.session_manager, self.orchestrator)
         
         # Permission handler (requires app)
         self.permission_handler = PermissionHandler(self.app, config)
@@ -91,10 +102,16 @@ class AgenticGramBot:
         
         # File upload handler
         self.app.add_handler(TelegramMessageHandler(filters.Document.ALL, self.message_handler.handle_file))
-        
+
+        # Text message handler (process as Claude instruction - no /code needed)
+        self.app.add_handler(TelegramMessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            self.message_handler.handle_text
+        ))
+
         # Callback query handler
         self.app.add_handler(CallbackQueryHandler(self._handle_callback))
-        
+
         logger.info("Handlers registered successfully")
 
     async def _handle_callback(self, update, context):
@@ -115,17 +132,29 @@ class AgenticGramBot:
     async def run(self) -> None:
         """Run the bot."""
         logger.info("Starting AgenticGram bot...")
-        
+
         # Start cleanup task
         if self.config["AUTO_CLEANUP_SESSIONS"]:
             asyncio.create_task(self._cleanup_task())
-        
+
         # Run bot
         await self.app.initialize()
         await self.app.start()
+
+        # Set bot commands menu
+        await self._setup_commands_menu()
+
         await self.app.updater.start_polling()
-        
+
         logger.info("Bot is running!")
+
+    async def _setup_commands_menu(self) -> None:
+        """Setup the bot commands menu in Telegram."""
+        try:
+            await self.app.bot.set_my_commands(BOT_COMMANDS)
+            logger.info("Bot commands menu configured")
+        except Exception as e:
+            logger.error(f"Failed to set bot commands: {e}")
         
         # Keep running
         try:
