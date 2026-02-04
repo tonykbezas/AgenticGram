@@ -174,21 +174,10 @@ class SessionManager:
         session = self.get_session(telegram_id)
         if not session:
             session = self.create_session(telegram_id)
-        
-        # Create workspace subdirectory in custom path
-        workspace = custom_dir / f"agenticgram_{telegram_id}"
-        
-        try:
-            workspace.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            logger.error(f"Permission denied creating workspace in: {custom_path}")
-            return None
-        except Exception as e:
-            logger.error(f"Error creating workspace directory: {e}")
-            return None
-        
+
+        # Use the directory directly without creating subdirectories
         # Update session with new work directory
-        session.work_dir = str(workspace)
+        session.work_dir = str(custom_dir)
         session.last_used = datetime.now()
         
         with sqlite3.connect(self.db_path) as conn:

@@ -60,8 +60,8 @@ class CodeCommands:
                 chat_id=chat_id,
                 output_callback=stream_callback
             )
-            
-            await sender.send_final(result)
+
+            await sender.send_final(result, instruction=instruction)
         
         except Exception as e:
             logger.error(f"Error executing code command: {e}", exc_info=True)

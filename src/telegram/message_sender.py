@@ -6,6 +6,7 @@ from typing import Optional, List
 from telegram import Message
 from .markdown import escape_markdown
 from .splitter import split_message, MAX_MESSAGE_LENGTH
+from .telegraph_publisher import publish_code_output
 
 logger = logging.getLogger(__name__)
 
@@ -111,44 +112,55 @@ class MessageSender:
                     if "Message is not modified" not in str(e):
                         logger.debug(f"Message {i} edit failed: {e}")
     
-    async def send_final(self, result: dict) -> None:
+    async def send_final(self, result: dict, instruction: str = "Claude Code Output") -> None:
         """Send final completion message."""
         logger.info(f"Sending final result: {result}")
         if result["success"]:
             output = result["output"]
             backend = result.get("backend", "unknown")
-            
+
             # Prepare final text
             escaped_output = escape_markdown(output)
             header = escape_markdown(f"✅ Completed (via {backend})\n\n")
             final_text = f"*{header}*```\n{escaped_output}\n```"
-            
+
             # Split
             chunks = split_message(final_text, MAX_MESSAGE_LENGTH)
-            
-            if len(chunks) > 5: # If gigantic, send as file
-                from io import BytesIO
-                output_file = BytesIO(output.encode('utf-8'))
-                output_file.name = "claude_output.txt"
-                
-                caption = escape_markdown(f"✅ Completed (via {backend})\n\nOutput too long, sent as file")
-                
-                await self.status_message.chat.send_document(
-                    document=output_file,
-                    filename="claude_output.txt",
-                    caption=f"*{caption}*",
-                    parse_mode="MarkdownV2"
+
+            if len(chunks) > 3:  # If too long, publish to Telegraph
+                logger.info("Output too long, publishing to Telegraph...")
+
+                telegraph_url = await publish_code_output(
+                    output=output,
+                    instruction=instruction,
+                    backend=backend
                 )
-                # Cleanup chain
-                for msg in self.message_chain:
-                    try:
-                        await msg.delete()
-                    except:
-                        pass
+
+                if telegraph_url:
+                    # Send Telegraph link
+                    header_text = escape_markdown(f"✅ Completed (via {backend})\n\n")
+                    link_text = escape_markdown("Output is long. Read full response here:")
+                    url_escaped = telegraph_url.replace("_", "\\_").replace(".", "\\.")
+
+                    await self.status_message.edit_text(
+                        f"*{header_text}*{link_text}\n\n{url_escaped}",
+                        parse_mode="MarkdownV2"
+                    )
+
+                    # Delete extra messages in chain
+                    for msg in self.message_chain[1:]:
+                        try:
+                            await msg.delete()
+                        except:
+                            pass
+                else:
+                    # Fallback to file if Telegraph fails
+                    logger.warning("Telegraph failed, falling back to file")
+                    await self._send_as_file(output, backend)
             else:
                 # Update chain with final text
                 await self._update_message_chain(chunks)
-                
+
                 # Delete any extra messages in chain if we shrank
                 if len(self.message_chain) > len(chunks):
                     for msg in self.message_chain[len(chunks):]:
@@ -163,3 +175,26 @@ class MessageSender:
                 f"*{escaped_error}*",
                 parse_mode="MarkdownV2"
             )
+
+    async def _send_as_file(self, output: str, backend: str) -> None:
+        """Send output as a file (fallback when Telegraph fails)."""
+        from io import BytesIO
+
+        output_file = BytesIO(output.encode('utf-8'))
+        output_file.name = "claude_output.txt"
+
+        caption = escape_markdown(f"✅ Completed (via {backend})\n\nOutput sent as file")
+
+        await self.status_message.chat.send_document(
+            document=output_file,
+            filename="claude_output.txt",
+            caption=f"*{caption}*",
+            parse_mode="MarkdownV2"
+        )
+
+        # Cleanup chain
+        for msg in self.message_chain:
+            try:
+                await msg.delete()
+            except:
+                pass
