@@ -74,26 +74,29 @@ class ClaudeClient:
         work_dir: str,
         output_callback: Optional[Callable[[str], Any]] = None,
         timeout: int = 1800,
-        permission_context: Dict[str, Any] = None
+        permission_context: Dict[str, Any] = None,
+        model: str = "sonnet"
     ) -> Dict[str, Any]:
         """
         Execute a command via Claude Code CLI with PTY.
-        
+
         Args:
             instruction: The instruction to send to Claude Code
             work_dir: Working directory for the command
             output_callback: Optional callback for streaming output
             timeout: Command timeout in seconds
             permission_context: Optional context to pass to permission callback (e.g. chat_id)
-            
+            model: Claude model to use (sonnet, opus, haiku, or full name)
+
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
         """
         try:
             Path(work_dir).mkdir(parents=True, exist_ok=True)
-            
+
             command = [
                 self.claude_path,
+                "--model", model,
                 instruction
             ]
             
@@ -210,7 +213,8 @@ class ClaudeClient:
         instruction: str,
         work_dir: str,
         output_callback: Optional[Callable[[str], Any]] = None,
-        timeout: int = 1800
+        timeout: int = 1800,
+        model: str = "sonnet"
     ) -> Dict[str, Any]:
         """
         Execute command via Claude Code CLI using pipes (bypass mode).
@@ -223,6 +227,7 @@ class ClaudeClient:
             work_dir: Working directory for the command
             output_callback: Optional callback for streaming output
             timeout: Command timeout in seconds
+            model: Claude model to use (sonnet, opus, haiku, or full name)
 
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
@@ -233,6 +238,7 @@ class ClaudeClient:
             command = [
                 self.claude_path,
                 "-p",  # Print mode (non-interactive)
+                "--model", model,
                 "--permission-mode", "bypassPermissions",  # Skip all permission prompts
                 "--output-format", "stream-json",  # Structured streaming output
                 "--verbose",  # Required for stream-json

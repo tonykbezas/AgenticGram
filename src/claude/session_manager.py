@@ -15,6 +15,14 @@ from dataclasses import dataclass, asdict
 logger = logging.getLogger(__name__)
 
 
+# Available Claude models
+CLAUDE_MODELS = {
+    "sonnet": "Claude Sonnet (default, balanced)",
+    "opus": "Claude Opus (most capable)",
+    "haiku": "Claude Haiku (fastest)",
+}
+
+
 @dataclass
 class Session:
     """Represents a user session."""
@@ -25,6 +33,7 @@ class Session:
     last_used: datetime
     message_count: int = 0
     bypass_mode: bool = False  # If True, use pipes with bypassPermissions
+    model: str = "sonnet"  # Default model
 
     def to_dict(self) -> dict:
         """Convert session to dictionary."""
@@ -76,16 +85,20 @@ class SessionManager:
                     created_at TEXT NOT NULL,
                     last_used TEXT NOT NULL,
                     message_count INTEGER DEFAULT 0,
-                    bypass_mode INTEGER DEFAULT 0
+                    bypass_mode INTEGER DEFAULT 0,
+                    model TEXT DEFAULT 'sonnet'
                 )
             """)
 
-            # Migration: Add bypass_mode column if it doesn't exist
+            # Migration: Add columns if they don't exist
             cursor.execute("PRAGMA table_info(sessions)")
             columns = [col[1] for col in cursor.fetchall()]
             if 'bypass_mode' not in columns:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN bypass_mode INTEGER DEFAULT 0")
                 logger.info("Added bypass_mode column to sessions table")
+            if 'model' not in columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN model TEXT DEFAULT 'sonnet'")
+                logger.info("Added model column to sessions table")
             
             # Permission history table
             cursor.execute("""
@@ -133,8 +146,8 @@ class SessionManager:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO sessions
-                (telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.telegram_id,
                 session.session_id,
@@ -142,7 +155,8 @@ class SessionManager:
                 session.created_at.isoformat(),
                 session.last_used.isoformat(),
                 session.message_count,
-                int(session.bypass_mode)
+                int(session.bypass_mode),
+                session.model
             ))
             conn.commit()
 
@@ -209,7 +223,7 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode
+                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model
                 FROM sessions WHERE telegram_id = ?
             """, (telegram_id,))
 
@@ -222,7 +236,8 @@ class SessionManager:
                     created_at=datetime.fromisoformat(row[3]),
                     last_used=datetime.fromisoformat(row[4]),
                     message_count=row[5],
-                    bypass_mode=bool(row[6]) if row[6] is not None else False
+                    bypass_mode=bool(row[6]) if row[6] is not None else False,
+                    model=row[7] if row[7] else "sonnet"
                 )
 
         return None
@@ -238,7 +253,7 @@ class SessionManager:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE sessions
-                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?, bypass_mode = ?
+                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?, bypass_mode = ?, model = ?
                 WHERE telegram_id = ?
             """, (
                 session.session_id,
@@ -246,6 +261,7 @@ class SessionManager:
                 session.last_used.isoformat(),
                 session.message_count,
                 int(session.bypass_mode),
+                session.model,
                 session.telegram_id
             ))
             conn.commit()
@@ -315,6 +331,41 @@ class SessionManager:
 
         logger.info(f"Set bypass mode for user {telegram_id}: {enabled}")
         return True
+
+    def set_model(self, telegram_id: int, model: str) -> bool:
+        """
+        Set the Claude model for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+            model: Model alias (sonnet, opus, haiku) or full name
+
+        Returns:
+            True if successful
+        """
+        session = self.get_session(telegram_id)
+        if not session:
+            session = self.create_session(telegram_id)
+
+        session.model = model
+        session.last_used = datetime.now()
+        self.update_session(session)
+
+        logger.info(f"Set model for user {telegram_id}: {model}")
+        return True
+
+    def get_model(self, telegram_id: int) -> str:
+        """
+        Get the current model for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+
+        Returns:
+            Model alias or name
+        """
+        session = self.get_session(telegram_id)
+        return session.model if session else "sonnet"
     
     def log_permission_request(self, request: PermissionRequest) -> None:
         """

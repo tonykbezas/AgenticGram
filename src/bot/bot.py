@@ -82,6 +82,7 @@ class AgenticGramBot:
         self.app.add_handler(TelegramCommandHandler("session", self.basic_commands.session))
         self.app.add_handler(TelegramCommandHandler("status", self.basic_commands.status))
         self.app.add_handler(TelegramCommandHandler("bypass", self.basic_commands.bypass))
+        self.app.add_handler(TelegramCommandHandler("model", self.basic_commands.model))
 
         self.app.add_handler(TelegramCommandHandler("code", self.code_commands.code))
         
@@ -100,11 +101,13 @@ class AgenticGramBot:
         """Central callback dispatcher."""
         query = update.callback_query
         data = query.data
-        
+
         if data.startswith("dir_"):
-            await self.browser_commands.handle_callback(query) 
+            await self.browser_commands.handle_callback(query)
         elif data.startswith("perm_"):
             await self.permission_handler.handle_callback(update, context)
+        elif data.startswith("model_"):
+            await self.basic_commands.handle_model_callback(update, context)
         else:
             await query.answer()
             logger.warning(f"Unknown callback data: {data}")

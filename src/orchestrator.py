@@ -139,19 +139,21 @@ class Orchestrator:
             if claude_available:
                 # Check if bypass mode is enabled
                 if session.bypass_mode:
-                    logger.info("Using Claude Code CLI with pipes (bypass mode)")
+                    logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}")
                     result = await self.claude_client.execute_with_pipes(
                         instruction=instruction,
                         work_dir=session.work_dir,
-                        output_callback=output_callback
+                        output_callback=output_callback,
+                        model=session.model
                     )
                 else:
-                    logger.info("Using Claude Code CLI with PTY (interactive mode)")
+                    logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}")
                     result = await self.claude_client.execute_command(
                         instruction=instruction,
                         work_dir=session.work_dir,
                         output_callback=output_callback,
-                        permission_context={"chat_id": chat_id}
+                        permission_context={"chat_id": chat_id},
+                        model=session.model
                     )
 
                 # Check if we should fallback to OpenRouter

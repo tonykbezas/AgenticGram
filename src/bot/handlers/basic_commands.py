@@ -1,8 +1,9 @@
 
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from src.bot.middleware.auth import AuthMiddleware
+from src.claude.session_manager import CLAUDE_MODELS
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ class BasicCommands:
             "or fallback to OpenRouter when needed.\n\n"
             "**Available Commands:**\n"
             "/code <instruction> - Execute an AI coding instruction\n"
+            "/model - Select Claude model (sonnet/opus/haiku)\n"
             "/bypass - Toggle bypass mode (clean output, no prompts)\n"
             "/browse - Browse and select working directory\n"
             "/session - Manage your session (new/clear/info)\n"
@@ -45,24 +47,23 @@ class BasicCommands:
             "**Commands:**\n"
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
+            "• `/model [name]` - Select Claude model\n"
+            "  Options: sonnet (balanced), opus (most capable), haiku (fastest)\n"
+            "  Or use full model name like `claude-sonnet-4-5-20250929`\n\n"
             "• `/bypass [on|off]` - Toggle bypass mode\n"
             "  ON: Uses pipes with clean output, all permissions auto-approved\n"
             "  OFF: Uses PTY with interactive permission prompts\n\n"
             "• `/browse [path]` - Browse and select working directory\n"
             "  Navigate through directories with inline buttons\n\n"
             "• `/trust [directory]` - Trust a directory for Claude CLI\n"
-            "  Prevents permission prompts for the specified directory\n"
-            "  If no directory specified, trusts current work directory\n\n"
+            "  Prevents permission prompts for the specified directory\n\n"
             "• `/session new` - Start a new session\n"
             "• `/session clear` - Clear current session\n"
             "• `/session info` - Show session information\n\n"
             "• `/status` - Check AI backend availability and current mode\n\n"
             "**File Uploads:**\n"
             "Send me code files and I'll save them to your workspace.\n"
-            "Supported: .py, .sql, .js, .txt, .json, .md\n\n"
-            "**Execution Modes:**\n"
-            "• PTY (default): Interactive prompts, you control permissions\n"
-            "• Bypass: Clean output, all permissions auto-approved"
+            "Supported: .py, .sql, .js, .txt, .json, .md"
         )
         
         await update.message.reply_text(help_message, parse_mode="Markdown")
@@ -131,14 +132,16 @@ class BasicCommands:
         claude_available = await self.orchestrator.check_claude_availability()
         openrouter_available = await self.orchestrator.check_openrouter_availability()
 
-        # Check bypass mode
+        # Check session settings
         session = self.session_manager.get_session(user_id)
         bypass_enabled = session.bypass_mode if session else False
+        current_model = session.model if session else "sonnet"
 
         status_message = "🔍 **Backend Status**\n\n"
         status_message += f"Claude Code CLI: {'✅ Available' if claude_available else '❌ Unavailable'}\n"
         status_message += f"OpenRouter API: {'✅ Available' if openrouter_available else '❌ Unavailable'}\n"
-        status_message += f"\n**Execution Mode:**\n"
+        status_message += f"\n**Session Settings:**\n"
+        status_message += f"Model: `{current_model}`\n"
         status_message += f"Bypass Mode: {'🚀 ON (pipes)' if bypass_enabled else '🔒 OFF (PTY)'}\n"
 
         await update.message.reply_text(status_message, parse_mode="Markdown")
@@ -199,3 +202,71 @@ class BasicCommands:
             )
 
         logger.info(f"User {user_id} toggled bypass mode to: {new_mode}")
+
+    async def model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /model command - select Claude model."""
+        if not await self.auth.check_auth(update, context):
+            return
+
+        user_id = update.effective_user.id
+
+        # Get current model
+        current_model = self.session_manager.get_model(user_id)
+
+        # If model specified as argument, set it directly
+        if context.args:
+            model_arg = context.args[0].lower()
+
+            # Check if valid model
+            if model_arg in CLAUDE_MODELS:
+                self.session_manager.set_model(user_id, model_arg)
+                model_desc = CLAUDE_MODELS[model_arg]
+                await update.message.reply_text(
+                    f"✅ **Model set to: {model_arg}**\n\n{model_desc}",
+                    parse_mode="Markdown"
+                )
+                return
+            else:
+                # Could be a full model name like claude-sonnet-4-5-20250929
+                self.session_manager.set_model(user_id, model_arg)
+                await update.message.reply_text(
+                    f"✅ **Model set to:** `{model_arg}`\n\n"
+                    "Note: Using custom model name. Make sure it's valid.",
+                    parse_mode="Markdown"
+                )
+                return
+
+        # Show model selection with inline keyboard
+        keyboard = []
+        for model_id, model_desc in CLAUDE_MODELS.items():
+            # Mark current model
+            label = f"{'✓ ' if model_id == current_model else ''}{model_id}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"model_{model_id}")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"🤖 **Select Claude Model**\n\n"
+            f"Current: **{current_model}**\n\n"
+            "Choose a model:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+
+    async def handle_model_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle model selection callback."""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        model_id = query.data.replace("model_", "")
+
+        if model_id in CLAUDE_MODELS:
+            self.session_manager.set_model(user_id, model_id)
+            model_desc = CLAUDE_MODELS[model_id]
+
+            await query.edit_message_text(
+                f"✅ **Model set to: {model_id}**\n\n{model_desc}",
+                parse_mode="Markdown"
+            )
+            logger.info(f"User {user_id} selected model: {model_id}")
