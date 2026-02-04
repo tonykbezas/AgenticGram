@@ -3,7 +3,8 @@
     "allow": [
       "Bash(wc:*)",
       "Bash(find:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(python:*)"
     ]
   }
 }

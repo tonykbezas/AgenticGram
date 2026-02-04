@@ -261,11 +261,14 @@ class ClaudeClient:
 
             logger.info(f"Executing Claude CLI with pipes (bypass mode) in {work_dir}")
 
+            # Create subprocess with larger buffer limit (16MB instead of default 64KB)
+            # This prevents LimitOverrunError for large Claude outputs
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir
+                cwd=work_dir,
+                limit=16 * 1024 * 1024  # 16MB buffer limit
             )
 
             output_lines = []
@@ -275,7 +278,21 @@ class ClaudeClient:
             async def read_stream():
                 nonlocal final_output
                 while True:
-                    line = await process.stdout.readline()
+                    try:
+                        line = await process.stdout.readline()
+                    except asyncio.LimitOverrunError as e:
+                        # Handle extremely large lines that exceed buffer limit
+                        logger.warning(f"Line exceeded buffer limit: {e}")
+                        # Read remaining data in chunks to clear the buffer
+                        try:
+                            chunk = await process.stdout.read(1024 * 1024)  # Read 1MB
+                            if chunk:
+                                output_lines.append("[Output truncated - line too large]")
+                                final_output = "\n".join(output_lines)
+                        except Exception:
+                            pass
+                        continue
+
                     if not line:
                         break
 
