@@ -169,6 +169,9 @@ class Orchestrator:
         
         logger.info(f"Executing command for user {telegram_id}, session {session.session_id}")
         
+        # specific fallback model if needed
+        fallback_model = None
+
         # Try Claude Code first (unless forced to use OpenRouter)
         if not force_openrouter:
             claude_available = await self.check_claude_availability()
@@ -203,11 +206,24 @@ class Orchestrator:
                         "session_id": session.session_id
                     }
                 else:
-                    # Check if error is quota-related
+                    # Check if error is quota-related (in error OR output)
                     error = result.get("error", "")
-                    if any(keyword in error.lower() for keyword in ["quota", "rate limit", "usage limit"]):
-                        logger.warning("Claude Code quota exceeded, falling back to OpenRouter")
+                    output = result.get("output", "")
+                    combined_text = (error + " " + output).lower()
+                    
+                    limit_keywords = [
+                        "quota", 
+                        "rate limit", 
+                        "usage limit", 
+                        "hit your limit", 
+                        "resets",
+                        "credits"
+                    ]
+                    
+                    if any(keyword in combined_text for keyword in limit_keywords):
+                        logger.warning("Claude Code quota exceeded, falling back to OpenRouter (Qwen)")
                         force_openrouter = True
+                        fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
                     else:
                         # Return Claude error
                         return {
@@ -235,9 +251,10 @@ class Orchestrator:
                     "backend": "none"
                 }
             
-            logger.info("Using OpenRouter API")
+            logger.info(f"Using OpenRouter API ({fallback_model or 'default'})")
             result = await self.openrouter_handler.execute_instruction(
                 instruction=instruction,
+                model=fallback_model,
                 system_prompt="You are a helpful AI coding assistant. Provide clear, concise responses."
             )
             
