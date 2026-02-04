@@ -193,7 +193,7 @@ class SessionManager:
             ))
             conn.commit()
         
-        logger.info(f"Set custom work directory for user {telegram_id}: {workspace}")
+        logger.info(f"Set custom work directory for user {telegram_id}: {custom_dir}")
         return session
     
     def get_session(self, telegram_id: int) -> Optional[Session]:
