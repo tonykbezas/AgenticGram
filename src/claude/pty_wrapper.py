@@ -333,6 +333,9 @@ class PTYWrapper:
             start_time = time.time()
             
             while True:
+                # Allow task cancellation
+                await asyncio.sleep(0)
+
                 if time.time() - start_time > timeout:
                     logger.warning(f"Command timed out after {timeout} seconds")
                     process.kill()

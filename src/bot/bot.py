@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # Bot commands for Telegram menu
 BOT_COMMANDS = [
     BotCommand("code", "Execute AI coding instruction"),
+    BotCommand("stop", "Stop running agent"),
     BotCommand("new", "Start fresh conversation"),
     BotCommand("model", "Select Claude model"),
     BotCommand("bypass", "Toggle bypass mode"),
@@ -96,6 +97,7 @@ class AgenticGramBot:
         self.app.add_handler(TelegramCommandHandler("bypass", self.basic_commands.bypass))
         self.app.add_handler(TelegramCommandHandler("model", self.basic_commands.model))
         self.app.add_handler(TelegramCommandHandler("new", self.basic_commands.new_conversation))
+        self.app.add_handler(TelegramCommandHandler("stop", self.basic_commands.stop))
 
         self.app.add_handler(TelegramCommandHandler("code", self.code_commands.code))
         

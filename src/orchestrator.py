@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class Orchestrator:
     """Orchestrates command execution across different AI backends."""
-    
+
     def __init__(
         self,
         session_manager: SessionManager,
@@ -27,7 +27,7 @@ class Orchestrator:
     ):
         """
         Initialize orchestrator.
-        
+
         Args:
             session_manager: SessionManager instance
             openrouter_api_key: Optional OpenRouter API key for fallback
@@ -37,7 +37,10 @@ class Orchestrator:
         self.claude_client = ClaudeClient(claude_path=claude_code_path)
         self.openrouter_handler = OpenRouterHandler(openrouter_api_key) if openrouter_api_key else None
         self.permission_callback: Optional[Callable] = None
-        
+
+        # Track active executions per user for cancellation
+        self._active_tasks: Dict[int, asyncio.Task] = {}
+
         # Set up Claude handler permission callback
         self.claude_client.set_permission_callback(self._permission_callback_wrapper)
     
@@ -121,6 +124,38 @@ class Orchestrator:
         Returns:
             Dictionary with execution result
         """
+        # Create a task for the execution logic
+        task = asyncio.create_task(self._execute_command_internal(
+            instruction, telegram_id, chat_id, output_callback, force_openrouter, continue_conversation
+        ))
+        
+        # Track the task
+        self._active_tasks[telegram_id] = task
+        
+        try:
+            return await task
+        except asyncio.CancelledError:
+            logger.info(f"Command execution cancelled for user {telegram_id}")
+            return {
+                "success": False,
+                "output": "[Execution cancelled by user]",
+                "error": "Cancelled by user via /stop"
+            }
+        finally:
+            # Remove from active tasks
+            if telegram_id in self._active_tasks:
+                del self._active_tasks[telegram_id]
+
+    async def _execute_command_internal(
+        self,
+        instruction: str,
+        telegram_id: int,
+        chat_id: int,
+        output_callback: Optional[Callable] = None,
+        force_openrouter: bool = False,
+        continue_conversation: bool = True
+    ) -> Dict[str, Any]:
+        """Internal execution logic (wrapped by execute_command for cancellation)."""
         # Get or create session
         session = self.session_manager.get_session(telegram_id)
         if not session:
@@ -217,6 +252,23 @@ class Orchestrator:
             "error": "No AI backend available",
             "backend": "none"
         }
+    
+    async def stop_execution(self, telegram_id: int) -> bool:
+        """
+        Stop any active execution for the given user.
+        
+        Args:
+            telegram_id: Telegram user ID
+            
+        Returns:
+            True if a task was stopped, False otherwise
+        """
+        if telegram_id in self._active_tasks:
+            task = self._active_tasks[telegram_id]
+            logger.info(f"Stopping active execution for user {telegram_id}")
+            task.cancel()
+            return True
+        return False
     
     async def cleanup(self) -> None:
         """Clean up resources."""

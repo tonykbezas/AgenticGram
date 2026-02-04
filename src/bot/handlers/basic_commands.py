@@ -68,6 +68,21 @@ class BasicCommands:
         
         await update.message.reply_text(help_message, parse_mode="Markdown")
 
+    async def stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /stop command."""
+        if not await self.auth.check_auth(update, context):
+            return
+            
+        user_id = update.effective_user.id
+        logger.info(f"User {user_id} requested to stop execution")
+        
+        stopped = await self.orchestrator.stop_execution(user_id)
+        
+        if stopped:
+            await update.message.reply_text("🛑 **Execution stopped.**", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("ℹ️ No active execution to stop.")
+
     async def session(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /session command."""
         if not await self.auth.check_auth(update, context):
