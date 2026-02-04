@@ -24,6 +24,7 @@ class BasicCommands:
             "or fallback to OpenRouter when needed.\n\n"
             "**Available Commands:**\n"
             "/code <instruction> - Execute an AI coding instruction\n"
+            "/bypass - Toggle bypass mode (clean output, no prompts)\n"
             "/browse - Browse and select working directory\n"
             "/session - Manage your session (new/clear/info)\n"
             "/status - Check backend availability\n"
@@ -44,6 +45,9 @@ class BasicCommands:
             "**Commands:**\n"
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
+            "• `/bypass [on|off]` - Toggle bypass mode\n"
+            "  ON: Uses pipes with clean output, all permissions auto-approved\n"
+            "  OFF: Uses PTY with interactive permission prompts\n\n"
             "• `/browse [path]` - Browse and select working directory\n"
             "  Navigate through directories with inline buttons\n\n"
             "• `/trust [directory]` - Trust a directory for Claude CLI\n"
@@ -52,13 +56,13 @@ class BasicCommands:
             "• `/session new` - Start a new session\n"
             "• `/session clear` - Clear current session\n"
             "• `/session info` - Show session information\n\n"
-            "• `/status` - Check AI backend availability\n\n"
+            "• `/status` - Check AI backend availability and current mode\n\n"
             "**File Uploads:**\n"
             "Send me code files and I'll save them to your workspace.\n"
             "Supported: .py, .sql, .js, .txt, .json, .md\n\n"
-            "**Permission System:**\n"
-            "Claude uses `--dangerously-skip-permissions` to avoid deadlocks. "
-            "Use `/trust <directory>` to manually trust directories if needed."
+            "**Execution Modes:**\n"
+            "• PTY (default): Interactive prompts, you control permissions\n"
+            "• Bypass: Clean output, all permissions auto-approved"
         )
         
         await update.message.reply_text(help_message, parse_mode="Markdown")
@@ -118,15 +122,80 @@ class BasicCommands:
         """Handle /status command."""
         if not await self.auth.check_auth(update, context):
             return
-        
+
         await update.message.chat.send_action("typing")
-        
+
+        user_id = update.effective_user.id
+
         # Check backend availability
         claude_available = await self.orchestrator.check_claude_availability()
         openrouter_available = await self.orchestrator.check_openrouter_availability()
-        
+
+        # Check bypass mode
+        session = self.session_manager.get_session(user_id)
+        bypass_enabled = session.bypass_mode if session else False
+
         status_message = "🔍 **Backend Status**\n\n"
         status_message += f"Claude Code CLI: {'✅ Available' if claude_available else '❌ Unavailable'}\n"
         status_message += f"OpenRouter API: {'✅ Available' if openrouter_available else '❌ Unavailable'}\n"
-        
+        status_message += f"\n**Execution Mode:**\n"
+        status_message += f"Bypass Mode: {'🚀 ON (pipes)' if bypass_enabled else '🔒 OFF (PTY)'}\n"
+
         await update.message.reply_text(status_message, parse_mode="Markdown")
+
+    async def bypass(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /bypass command - toggle bypass mode."""
+        if not await self.auth.check_auth(update, context):
+            return
+
+        user_id = update.effective_user.id
+
+        # Check for explicit on/off argument
+        if context.args:
+            arg = context.args[0].lower()
+            if arg in ["on", "1", "true", "yes"]:
+                self.session_manager.set_bypass_mode(user_id, True)
+                await update.message.reply_text(
+                    "🚀 **Bypass Mode: ON**\n\n"
+                    "Using pipes with `--permission-mode bypassPermissions`\n"
+                    "• Clean output (no TUI artifacts)\n"
+                    "• All permissions auto-approved\n"
+                    "• ⚠️ Claude can execute any action without confirmation",
+                    parse_mode="Markdown"
+                )
+                return
+            elif arg in ["off", "0", "false", "no"]:
+                self.session_manager.set_bypass_mode(user_id, False)
+                await update.message.reply_text(
+                    "🔒 **Bypass Mode: OFF**\n\n"
+                    "Using PTY (interactive mode)\n"
+                    "• Interactive permission prompts\n"
+                    "• You approve/deny each action",
+                    parse_mode="Markdown"
+                )
+                return
+
+        # Toggle mode
+        success, new_mode = self.session_manager.toggle_bypass_mode(user_id)
+
+        if new_mode:
+            await update.message.reply_text(
+                "🚀 **Bypass Mode: ON**\n\n"
+                "Using pipes with `--permission-mode bypassPermissions`\n"
+                "• Clean output (no TUI artifacts)\n"
+                "• All permissions auto-approved\n"
+                "• ⚠️ Claude can execute any action without confirmation\n\n"
+                "Use `/bypass off` to disable.",
+                parse_mode="Markdown"
+            )
+        else:
+            await update.message.reply_text(
+                "🔒 **Bypass Mode: OFF**\n\n"
+                "Using PTY (interactive mode)\n"
+                "• Interactive permission prompts\n"
+                "• You approve/deny each action\n\n"
+                "Use `/bypass on` to enable.",
+                parse_mode="Markdown"
+            )
+
+        logger.info(f"User {user_id} toggled bypass mode to: {new_mode}")

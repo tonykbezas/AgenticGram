@@ -6,6 +6,7 @@ Manages interaction with Claude Code CLI, including permission handling.
 import asyncio
 import logging
 import re
+import json
 import uuid
 from typing import Optional, Callable, Dict, Any
 from pathlib import Path
@@ -203,3 +204,168 @@ class ClaudeClient:
         """Set the permission callback function."""
         self.permission_callback = callback
         logger.info("Permission callback updated")
+
+    async def execute_with_pipes(
+        self,
+        instruction: str,
+        work_dir: str,
+        output_callback: Optional[Callable[[str], Any]] = None,
+        timeout: int = 1800
+    ) -> Dict[str, Any]:
+        """
+        Execute command via Claude Code CLI using pipes (bypass mode).
+
+        Uses -p (print mode) with --permission-mode bypassPermissions for clean output
+        without TUI artifacts. No interactive prompts - all permissions auto-approved.
+
+        Args:
+            instruction: The instruction to send to Claude Code
+            work_dir: Working directory for the command
+            output_callback: Optional callback for streaming output
+            timeout: Command timeout in seconds
+
+        Returns:
+            Dictionary with 'success', 'output', and optional 'error' keys
+        """
+        try:
+            Path(work_dir).mkdir(parents=True, exist_ok=True)
+
+            command = [
+                self.claude_path,
+                "-p",  # Print mode (non-interactive)
+                "--permission-mode", "bypassPermissions",  # Skip all permission prompts
+                "--output-format", "stream-json",  # Structured streaming output
+                instruction
+            ]
+
+            logger.info(f"Executing Claude CLI with pipes (bypass mode) in {work_dir}")
+
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=work_dir
+            )
+
+            output_lines = []
+            final_output = ""
+
+            # Read streaming JSON output
+            async def read_stream():
+                nonlocal final_output
+                while True:
+                    line = await process.stdout.readline()
+                    if not line:
+                        break
+
+                    try:
+                        line_text = line.decode('utf-8', errors='replace').strip()
+                        if not line_text:
+                            continue
+
+                        # Parse JSON line
+                        data = json.loads(line_text)
+
+                        # Extract content based on message type
+                        content = self._extract_content_from_stream(data)
+                        if content:
+                            output_lines.append(content)
+                            final_output = "\n".join(output_lines)
+
+                            if output_callback:
+                                try:
+                                    await output_callback(final_output)
+                                except Exception as e:
+                                    logger.error(f"Error in output callback: {e}")
+
+                    except json.JSONDecodeError:
+                        # Not JSON, append as raw text
+                        raw_text = line.decode('utf-8', errors='replace').strip()
+                        if raw_text:
+                            output_lines.append(raw_text)
+                            final_output = "\n".join(output_lines)
+
+            try:
+                await asyncio.wait_for(read_stream(), timeout=timeout)
+            except asyncio.TimeoutError:
+                process.kill()
+                return {
+                    "success": False,
+                    "output": final_output,
+                    "error": f"Timed out after {timeout} seconds"
+                }
+
+            await process.wait()
+
+            # Read any stderr
+            stderr_data = await process.stderr.read()
+            stderr_text = stderr_data.decode('utf-8', errors='replace').strip()
+            if stderr_text:
+                logger.warning(f"Claude CLI stderr: {stderr_text}")
+
+            success = process.returncode == 0
+
+            if success:
+                logger.info("Pipes command completed successfully")
+            else:
+                logger.error(f"Pipes command failed with code {process.returncode}")
+
+            return {
+                "success": success,
+                "output": final_output,
+                "returncode": process.returncode,
+                "stderr": stderr_text if stderr_text else None
+            }
+
+        except Exception as e:
+            logger.error(f"Error executing Claude Code with pipes: {e}", exc_info=True)
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Unexpected error: {str(e)}"
+            }
+
+    def _extract_content_from_stream(self, data: dict) -> Optional[str]:
+        """
+        Extract readable content from stream-json message.
+
+        Args:
+            data: Parsed JSON data from stream
+
+        Returns:
+            Extracted content string or None
+        """
+        msg_type = data.get("type", "")
+
+        # Handle different message types from Claude stream-json
+        if msg_type == "assistant":
+            # Assistant message with content
+            message = data.get("message", {})
+            content_blocks = message.get("content", [])
+            texts = []
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+            return "\n".join(texts) if texts else None
+
+        elif msg_type == "content_block_delta":
+            # Streaming delta
+            delta = data.get("delta", {})
+            if delta.get("type") == "text_delta":
+                return delta.get("text", "")
+
+        elif msg_type == "result":
+            # Final result message
+            result = data.get("result", "")
+            if result:
+                return result
+            # Check for subresult
+            subresult = data.get("subresult", "")
+            if subresult:
+                return subresult
+
+        elif msg_type == "system":
+            # System message (usually ignorable)
+            return None
+
+        return None

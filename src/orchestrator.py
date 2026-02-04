@@ -135,21 +135,30 @@ class Orchestrator:
         # Try Claude Code first (unless forced to use OpenRouter)
         if not force_openrouter:
             claude_available = await self.check_claude_availability()
-            
+
             if claude_available:
-                logger.info("Using Claude Code CLI")
-                result = await self.claude_client.execute_command(
-                    instruction=instruction,
-                    work_dir=session.work_dir,
-                    output_callback=output_callback,
-                    permission_context={"chat_id": chat_id}
-                )
-                
+                # Check if bypass mode is enabled
+                if session.bypass_mode:
+                    logger.info("Using Claude Code CLI with pipes (bypass mode)")
+                    result = await self.claude_client.execute_with_pipes(
+                        instruction=instruction,
+                        work_dir=session.work_dir,
+                        output_callback=output_callback
+                    )
+                else:
+                    logger.info("Using Claude Code CLI with PTY (interactive mode)")
+                    result = await self.claude_client.execute_command(
+                        instruction=instruction,
+                        work_dir=session.work_dir,
+                        output_callback=output_callback,
+                        permission_context={"chat_id": chat_id}
+                    )
+
                 # Check if we should fallback to OpenRouter
                 if result["success"]:
                     return {
                         **result,
-                        "backend": "claude_code",
+                        "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
                         "session_id": session.session_id
                     }
                 else:
@@ -162,7 +171,7 @@ class Orchestrator:
                         # Return Claude error
                         return {
                             **result,
-                            "backend": "claude_code",
+                            "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
                             "session_id": session.session_id
                         }
         

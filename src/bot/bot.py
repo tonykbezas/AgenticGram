@@ -81,7 +81,8 @@ class AgenticGramBot:
         self.app.add_handler(TelegramCommandHandler("help", self.basic_commands.help))
         self.app.add_handler(TelegramCommandHandler("session", self.basic_commands.session))
         self.app.add_handler(TelegramCommandHandler("status", self.basic_commands.status))
-        
+        self.app.add_handler(TelegramCommandHandler("bypass", self.basic_commands.bypass))
+
         self.app.add_handler(TelegramCommandHandler("code", self.code_commands.code))
         
         self.app.add_handler(TelegramCommandHandler("browse", self.browser_commands.browse))

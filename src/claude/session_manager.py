@@ -24,7 +24,8 @@ class Session:
     created_at: datetime
     last_used: datetime
     message_count: int = 0
-    
+    bypass_mode: bool = False  # If True, use pipes with bypassPermissions
+
     def to_dict(self) -> dict:
         """Convert session to dictionary."""
         data = asdict(self)
@@ -74,9 +75,17 @@ class SessionManager:
                     work_dir TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     last_used TEXT NOT NULL,
-                    message_count INTEGER DEFAULT 0
+                    message_count INTEGER DEFAULT 0,
+                    bypass_mode INTEGER DEFAULT 0
                 )
             """)
+
+            # Migration: Add bypass_mode column if it doesn't exist
+            cursor.execute("PRAGMA table_info(sessions)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'bypass_mode' not in columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN bypass_mode INTEGER DEFAULT 0")
+                logger.info("Added bypass_mode column to sessions table")
             
             # Permission history table
             cursor.execute("""
@@ -123,19 +132,20 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT OR REPLACE INTO sessions 
-                (telegram_id, session_id, work_dir, created_at, last_used, message_count)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO sessions
+                (telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.telegram_id,
                 session.session_id,
                 session.work_dir,
                 session.created_at.isoformat(),
                 session.last_used.isoformat(),
-                session.message_count
+                session.message_count,
+                int(session.bypass_mode)
             ))
             conn.commit()
-        
+
         logger.info(f"Created new session {session_id} for user {telegram_id}")
         return session
     
@@ -200,20 +210,20 @@ class SessionManager:
     def get_session(self, telegram_id: int) -> Optional[Session]:
         """
         Get existing session for a user.
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             Session object if exists, None otherwise
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count
+                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode
                 FROM sessions WHERE telegram_id = ?
             """, (telegram_id,))
-            
+
             row = cursor.fetchone()
             if row:
                 return Session(
@@ -222,29 +232,31 @@ class SessionManager:
                     work_dir=row[2],
                     created_at=datetime.fromisoformat(row[3]),
                     last_used=datetime.fromisoformat(row[4]),
-                    message_count=row[5]
+                    message_count=row[5],
+                    bypass_mode=bool(row[6]) if row[6] is not None else False
                 )
-        
+
         return None
     
     def update_session(self, session: Session) -> None:
         """
         Update session in database.
-        
+
         Args:
             session: Session object to update
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE sessions 
-                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?
+                UPDATE sessions
+                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?, bypass_mode = ?
                 WHERE telegram_id = ?
             """, (
                 session.session_id,
                 session.work_dir,
                 session.last_used.isoformat(),
                 session.message_count,
+                int(session.bypass_mode),
                 session.telegram_id
             ))
             conn.commit()
@@ -252,24 +264,67 @@ class SessionManager:
     def delete_session(self, telegram_id: int) -> bool:
         """
         Delete a user's session.
-        
+
         Args:
             telegram_id: Telegram user ID
-            
+
         Returns:
             True if session was deleted, False if not found
         """
         session = self.get_session(telegram_id)
         if not session:
             return False
-        
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM sessions WHERE telegram_id = ?", (telegram_id,))
             cursor.execute("DELETE FROM permissions WHERE session_id = ?", (session.session_id,))
             conn.commit()
-        
+
         logger.info(f"Deleted session for user {telegram_id}")
+        return True
+
+    def toggle_bypass_mode(self, telegram_id: int) -> tuple[bool, bool]:
+        """
+        Toggle bypass mode for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+
+        Returns:
+            Tuple of (success, new_bypass_mode_value)
+        """
+        session = self.get_session(telegram_id)
+        if not session:
+            session = self.create_session(telegram_id)
+
+        session.bypass_mode = not session.bypass_mode
+        session.last_used = datetime.now()
+        self.update_session(session)
+
+        logger.info(f"Toggled bypass mode for user {telegram_id}: {session.bypass_mode}")
+        return True, session.bypass_mode
+
+    def set_bypass_mode(self, telegram_id: int, enabled: bool) -> bool:
+        """
+        Set bypass mode for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+            enabled: Whether to enable bypass mode
+
+        Returns:
+            True if successful
+        """
+        session = self.get_session(telegram_id)
+        if not session:
+            session = self.create_session(telegram_id)
+
+        session.bypass_mode = enabled
+        session.last_used = datetime.now()
+        self.update_session(session)
+
+        logger.info(f"Set bypass mode for user {telegram_id}: {enabled}")
         return True
     
     def log_permission_request(self, request: PermissionRequest) -> None:
