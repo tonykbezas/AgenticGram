@@ -44,8 +44,7 @@ class AgenticGramBot:
         self.orchestrator = Orchestrator(
             session_manager=self.session_manager,
             openrouter_api_key=config.get("OPENROUTER_API_KEY"),
-            claude_code_path=config.get("CLAUDE_CODE_PATH"),
-            notification_callback=self.send_notification
+            claude_code_path=config.get("CLAUDE_CODE_PATH")
         )
         
         self.directory_browser = DirectoryBrowser(
@@ -80,23 +79,6 @@ class AgenticGramBot:
         
         self._register_handlers()
 
-    async def send_notification(self, user_id: int, message: str) -> None:
-        """
-        Send a notification to a user.
-        
-        Args:
-            user_id: Telegram user ID
-            message: Message text to send
-        """
-        try:
-            await self.app.bot.send_message(
-                chat_id=user_id,
-                text=message,
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send notification to {user_id}: {e}")
-        
     def _register_handlers(self) -> None:
         """Register command and message handlers."""
         
