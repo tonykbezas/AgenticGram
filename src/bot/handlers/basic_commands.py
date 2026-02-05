@@ -48,10 +48,10 @@ class BasicCommands:
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
             "• `/model [name]` - Select AI model\n"
-            "  **Claude models** (use authenticated account):\n"
-            "    - sonnet (balanced), opus (most capable), haiku (fastest)\n"
-            "  **Qwen 3 models** (via OpenRouter API):\n"
-            "    - qwen/qwen3-max, qwen/qwen3-coder-next, qwen/qwen3-coder:free\n\n"
+            "  *Claude models* (use authenticated account):\n"
+            "    sonnet (balanced), opus (most capable), haiku (fastest)\n"
+            "  *Qwen 3 models* (via OpenRouter API):\n"
+            "    qwen/qwen3-max, qwen/qwen3-coder-next, qwen/qwen3-coder:free\n\n"
             "• `/bypass [on|off]` - Toggle bypass mode\n"
             "  ON: Uses pipes with clean output, all permissions auto-approved\n"
             "  OFF: Uses PTY with interactive permission prompts\n\n"
@@ -263,11 +263,11 @@ class BasicCommands:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            f"🤖 **Select AI Model**\n\n"
-            f"Current: **{current_model}**\n\n"
-            "**Claude models** (sonnet/opus/haiku):\n"
+            f"🤖 *Select AI Model*\n\n"
+            f"Current: `{current_model}`\n\n"
+            "*Claude models* (sonnet/opus/haiku):\n"
             "→ Use authenticated Claude Code CLI account\n\n"
-            "**Qwen 3 models** (qwen/qwen3-*):\n"
+            "*Qwen 3 models* (via OpenRouter):\n"
             "→ Use OpenRouter API via Claude CLI\n\n"
             "Choose a model:",
             reply_markup=reply_markup,
