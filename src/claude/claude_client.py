@@ -77,7 +77,7 @@ class ClaudeClient:
         permission_context: Dict[str, Any] = None,
         model: str = "sonnet",
         continue_conversation: bool = True,
-        env_vars: Optional[Dict[str, str]] = None
+        env_override: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute a command via Claude Code CLI with PTY.
@@ -90,6 +90,7 @@ class ClaudeClient:
             permission_context: Optional context to pass to permission callback (e.g. chat_id)
             model: Claude model to use (sonnet, opus, haiku, or full name)
             continue_conversation: Whether to continue previous conversation in this directory
+            env_override: Optional environment variables to override (for OpenRouter models)
 
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
@@ -120,7 +121,7 @@ class ClaudeClient:
                 prompt_callback=scoped_prompt_handler,
                 output_callback=output_callback,
                 timeout=timeout,
-                env_vars=env_vars
+                env_override=env_override
             )
             logger.info(f"Tonyy: {result}")
             if result["success"]:
@@ -225,7 +226,7 @@ class ClaudeClient:
         timeout: int = 1800,
         model: str = "sonnet",
         continue_conversation: bool = True,
-        env_vars: Optional[Dict[str, str]] = None
+        env_override: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute command via Claude Code CLI using pipes (bypass mode).
@@ -240,6 +241,7 @@ class ClaudeClient:
             timeout: Command timeout in seconds
             model: Claude model to use (sonnet, opus, haiku, or full name)
             continue_conversation: Whether to continue previous conversation in this directory
+            env_override: Optional environment variables to override (for OpenRouter models)
 
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
@@ -264,10 +266,12 @@ class ClaudeClient:
 
             logger.info(f"Executing Claude CLI with pipes (bypass mode) in {work_dir}")
 
-            # Prepare environment
+            # Prepare environment variables
+            import os
             env = os.environ.copy()
-            if env_vars:
-                env.update(env_vars)
+            if env_override:
+                env.update(env_override)
+                logger.info(f"Using environment override for model: {model}")
 
             # Create subprocess with larger buffer limit (16MB instead of default 64KB)
             # This prevents LimitOverrunError for large Claude outputs

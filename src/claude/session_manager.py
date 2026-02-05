@@ -20,6 +20,9 @@ CLAUDE_MODELS = {
     "sonnet": "Claude Sonnet (default, balanced)",
     "opus": "Claude Opus (most capable)",
     "haiku": "Claude Haiku (fastest)",
+    "qwen/qwen3-max": "Qwen3 Max (OpenRouter - reasoning & multilingual)",
+    "qwen/qwen3-coder-next": "Qwen3 Coder Next (OpenRouter - 80B, 3B active)",
+    "qwen/qwen3-coder:free": "Qwen3 Coder Free (OpenRouter - 480B MoE)",
 }
 
 

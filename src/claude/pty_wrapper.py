@@ -284,18 +284,19 @@ class PTYWrapper:
         prompt_callback: Optional[Callable[[str], Any]] = None,
         output_callback: Optional[Callable[[str], Any]] = None,
         timeout: int = 1800,
-        env_vars: Optional[Dict[str, str]] = None
+        env_override: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         Execute command in a PTY and handle interactive prompts.
-        
+
         Args:
             command: Command and arguments to execute
             cwd: Working directory
             prompt_callback: Async callback for handling prompts, receives clean prompt text
             output_callback: Async callback for streaming output
             timeout: Command timeout in seconds
-            
+            env_override: Optional environment variables to override
+
         Returns:
             Dictionary with 'success', 'output', and optional 'error' keys
         """
@@ -306,11 +307,12 @@ class PTYWrapper:
             # Create PTY
             master_fd, slave_fd = pty.openpty()
             logger.info(f"Created PTY for command: {' '.join(command)}")
-            
-            # Prepare environment
+
+            # Prepare environment variables
             env = os.environ.copy()
-            if env_vars:
-                env.update(env_vars)
+            if env_override:
+                env.update(env_override)
+                logger.info("Using environment variable overrides")
 
             # Start process with PTY
             process = subprocess.Popen(

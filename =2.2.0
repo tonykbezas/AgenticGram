@@ -1,0 +1,15 @@
+Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
+Collecting telegraph
+  Downloading https://archive1.piwheels.org/simple/telegraph/telegraph-2.2.0-py3-none-any.whl (10 kB)
+Collecting requests (from telegraph)
+  Downloading https://www.piwheels.org/simple/requests/requests-2.32.5-py3-none-any.whl (64 kB)
+Collecting charset_normalizer<4,>=2 (from requests->telegraph)
+  Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (37 kB)
+Requirement already satisfied: idna<4,>=2.5 in ./venv/lib/python3.11/site-packages (from requests->telegraph) (3.11)
+Collecting urllib3<3,>=1.21.1 (from requests->telegraph)
+  Downloading https://www.piwheels.org/simple/urllib3/urllib3-2.6.3-py3-none-any.whl (131 kB)
+Requirement already satisfied: certifi>=2017.4.17 in ./venv/lib/python3.11/site-packages (from requests->telegraph) (2026.1.4)
+Downloading charset_normalizer-3.4.4-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (147 kB)
+Installing collected packages: urllib3, charset_normalizer, requests, telegraph
+
+Successfully installed charset_normalizer-3.4.4 requests-2.32.5 telegraph-2.2.0 urllib3-2.6.3

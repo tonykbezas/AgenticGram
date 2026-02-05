@@ -21,11 +21,11 @@ class BasicCommands:
         user_id = update.effective_user.id
         welcome_message = (
             "🤖 **Welcome to AgenticGram!**\n\n"
-            "I'm your AI coding assistant bridge. I can execute commands via Claude Code CLI "
-            "or fallback to OpenRouter when needed.\n\n"
+            "I'm your AI coding assistant powered by Claude Code CLI.\n"
+            "Use your authenticated Claude account or OpenRouter models.\n\n"
             "**Available Commands:**\n"
             "/code <instruction> - Execute an AI coding instruction\n"
-            "/model - Select Claude model (sonnet/opus/haiku)\n"
+            "/model - Select AI model (Claude Pro or Qwen 3)\n"
             "/bypass - Toggle bypass mode (clean output, no prompts)\n"
             "/browse - Browse and select working directory\n"
             "/session - Manage your session (new/clear/info)\n"
@@ -47,9 +47,11 @@ class BasicCommands:
             "**Commands:**\n"
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
-            "• `/model [name]` - Select Claude model\n"
-            "  Options: sonnet (balanced), opus (most capable), haiku (fastest)\n"
-            "  Or use full model name like `claude-sonnet-4-5-20250929`\n\n"
+            "• `/model [name]` - Select AI model\n"
+            "  **Claude models** (use authenticated account):\n"
+            "    - sonnet (balanced), opus (most capable), haiku (fastest)\n"
+            "  **Qwen 3 models** (via OpenRouter API):\n"
+            "    - qwen/qwen3-max, qwen/qwen3-coder-next, qwen/qwen3-coder:free\n\n"
             "• `/bypass [on|off]` - Toggle bypass mode\n"
             "  ON: Uses pipes with clean output, all permissions auto-approved\n"
             "  OFF: Uses PTY with interactive permission prompts\n\n"
@@ -261,8 +263,12 @@ class BasicCommands:
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(
-            f"🤖 **Select Claude Model**\n\n"
+            f"🤖 **Select AI Model**\n\n"
             f"Current: **{current_model}**\n\n"
+            "**Claude models** (sonnet/opus/haiku):\n"
+            "→ Use authenticated Claude Code CLI account\n\n"
+            "**Qwen 3 models** (qwen/qwen3-*):\n"
+            "→ Use OpenRouter API via Claude CLI\n\n"
             "Choose a model:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
