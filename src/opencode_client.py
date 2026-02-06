@@ -11,7 +11,7 @@ import uuid
 from typing import Optional, Callable, Dict, Any
 from pathlib import Path
 
-from .pty_wrapper import PTYWrapper
+from src.claude.pty_wrapper import PTYWrapper
 
 logger = logging.getLogger(__name__)
 

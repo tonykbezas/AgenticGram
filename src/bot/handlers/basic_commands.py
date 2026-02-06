@@ -143,21 +143,29 @@ class BasicCommands:
 
         await update.message.chat.send_action("typing")
 
-        user_id = update.effective_user.id
+user_id = update.effective_user.id
 
         # Check backend availability
         claude_available = await self.orchestrator.check_claude_availability()
+        opencode_available = await self.orchestrator.check_opencode_availability()
         openrouter_available = await self.orchestrator.check_openrouter_availability()
 
         # Check session settings
         session = self.session_manager.get_session(user_id)
         bypass_enabled = session.bypass_mode if session else False
         current_model = session.model if session else "sonnet"
+        current_agent = session.agent_type if session else "claude"
+        agent_names = {
+            "claude": "Claude Code CLI",
+            "opencode": "OpenCode CLI"
+        }
 
         status_message = "🔍 **Backend Status**\n\n"
         status_message += f"Claude Code CLI: {'✅ Available' if claude_available else '❌ Unavailable'}\n"
+        status_message += f"OpenCode CLI: {'✅ Available' if opencode_available else '❌ Unavailable'}\n"
         status_message += f"OpenRouter API: {'✅ Available' if openrouter_available else '❌ Unavailable'}\n"
         status_message += f"\n**Session Settings:**\n"
+        status_message += f"Agent: `{agent_names.get(current_agent, current_agent)}`\n"
         status_message += f"Model: `{current_model}`\n"
         status_message += f"Bypass Mode: {'🚀 ON (pipes)' if bypass_enabled else '🔒 OFF (PTY)'}\n"
 
