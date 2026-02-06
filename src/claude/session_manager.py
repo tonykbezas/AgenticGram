@@ -23,7 +23,12 @@ CLAUDE_MODELS = {
     "qwen/qwen3-max": "Qwen3 Max (OpenRouter - reasoning & multilingual)",
     "qwen/qwen3-coder-next": "Qwen3 Coder Next (OpenRouter - 80B, 3B active)",
     "qwen/qwen3-coder:free": "Qwen3 Coder Free (OpenRouter - 480B MoE)",
+    "glm-4.7": "GLM-4.7 (OpenCode recommended model)",
+    "glm-4": "GLM-4 (fast, reasoning tasks)",
+    "deepseek-coder": "DeepSeek Coder (code tasks)",
 }
+
+OPENCODE_DEFAULT_MODEL = "glm-4.7"
 
 
 @dataclass

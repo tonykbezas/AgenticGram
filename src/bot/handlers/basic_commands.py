@@ -45,21 +45,20 @@ class BasicCommands:
         help_message = (
             "📚 **AgenticGram Help**\n\n"
             "**Commands:**\n"
-            "• `/code <instruction>` - Execute coding instruction\n"
-            "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
+            "• `/code <instruction>` - Execute coding instruction\n\n"
             "• `/agents [claude|opencode]` - Select AI agent\n"
-            "  claude: Claude Code CLI (official)\n"
-            "  opencode: OpenCode CLI (multi-provider)\n\n"
-            "• `/model [name]` - Select AI model\n\n"
+            "  • claude: Claude Code CLI (models: sonnet, opus, haiku)\n"
+            "  • opencode: OpenCode CLI (recommended: **GLM-4.7**, also glm-4)\n\n"
+            "• `/model [name]` - Select AI model\n"
+            "  Claude: sonnet, opus, haiku\n"
+            "  OpenCode: glm-4.7, glm-4, deepseek-coder\n\n"
             "• `/bypass [on|off]` - Toggle bypass mode\n"
-            "  ON: Clean output, all permissions auto-approved\n"
+            "  ON: Clean output, auto-approved permissions\n"
             "  OFF: Interactive permission prompts\n\n"
             "• `/browse [path]` - Browse and select working directory\n\n"
             "• `/session new/clear/info` - Manage session\n\n"
-            "• `/status` - Check AI backend availability\n\n"
-            "**File Uploads:**\n"
-            "Send me code files and I'll save them to your workspace.\n"
-            "Supported: .py, .sql, .js, .txt, .json, .md"
+            "• `/status` - Check backend availability\n\n"
+            "**Note:** If selected CLI unavailable, auto-switches to available CLI"
         )
         
         await update.message.reply_text(help_message, parse_mode="Markdown")
@@ -146,22 +145,54 @@ class BasicCommands:
 
         # Check session settings
         session = self.session_manager.get_session(user_id)
-        bypass_enabled = session.bypass_mode if session else False
-        current_model = session.model if session else "sonnet"
-        current_agent = session.agent_type if session else "claude"
+        if not session:
+            await update.message.reply_text("ℹ️ No active session. Use `/session new` to create one.")
+            return
+
+        # Determine which backend will actually be used
+        from src.claude.session_manager import OPENCODE_DEFAULT_MODEL
+        actual_agent = session.agent_type
+        actual_model = session.model
+        warning_note = ""
+
+        # If selected CLI unavailable, show what will actually be used
+        if actual_agent == "opencode" and not opencode_available:
+            if claude_available:
+                actual_agent = "claude"
+                actual_model = session.model if session.model not in ["sonnet", "opus", "haiku"] else "sonnet"
+                warning_note = f"\n⚠️ OpenCode CLI unavailable. Using Claude Code CLI with model `{actual_model}`\n"
+            elif openrouter_available:
+                actual_agent = "openrouter"
+                warning_note = f"\n⚠️ OpenCode CLI unavailable. Using OpenRouter API\n"
+        elif actual_agent == "claude" and not claude_available:
+            if opencode_available:
+                actual_agent = "opencode"
+                actual_model = session.model if session.model.startswith("glm") else OPENCODE_DEFAULT_MODEL
+                warning_note = f"\n⚠️ Claude Code CLI unavailable. Using OpenCode CLI with model `{OPENCODE_DEFAULT_MODEL}`\n"
+            elif openrouter_available:
+                actual_agent = "openrouter"
+                warning_note = f"\n⚠️ Claude Code CLI unavailable. Using OpenRouter API\n"
+
+        # Show status
         agent_names = {
             "claude": "Claude Code CLI",
-            "opencode": "OpenCode CLI"
+            "opencode": "OpenCode CLI",
+            "openrouter": "OpenRouter API"
         }
 
         status_message = "🔍 **Backend Status**\n\n"
         status_message += f"Claude Code CLI: {'✅ Available' if claude_available else '❌ Unavailable'}\n"
         status_message += f"OpenCode CLI: {'✅ Available' if opencode_available else '❌ Unavailable'}\n"
         status_message += f"OpenRouter API: {'✅ Available' if openrouter_available else '❌ Unavailable'}\n"
-        status_message += f"\n**Session Settings:**\n"
-        status_message += f"Agent: `{agent_names.get(current_agent, current_agent)}`\n"
-        status_message += f"Model: `{current_model}`\n"
-        status_message += f"Bypass Mode: {'🚀 ON (pipes)' if bypass_enabled else '🔒 OFF (PTY)'}\n"
+        status_message += f"\n**Active Session:**\n"
+        status_message += f"Agent: `{agent_names.get(actual_agent, actual_agent)}`\n"
+        status_message += f"Model: `{actual_model}`\n"
+        status_message += f"Bypass Mode: {'🚀 ON (clean output)' if session.bypass_mode else '🔒 OFF (interactive)'}\n"
+
+        if warning_note:
+            status_message += f"{warning_note}"
+        elif actual_agent != session.agent_type:
+            status_message += f"\nℹ️ Selected `{agent_names.get(session.agent_type, session.agent_type)}` but using `{agent_names.get(actual_agent, actual_agent)}` (unavailable)\n"
 
         await update.message.reply_text(status_message, parse_mode="Markdown")
 
@@ -325,7 +356,9 @@ class BasicCommands:
                 self.session_manager.set_agent_type(user_id, "claude")
                 await update.message.reply_text(
                     "✅ **Agent set to Claude Code CLI**\n\n"
-                    "Uses Claude's official CLI with interactive permission support.",
+                    "• Models: sonnet, opus, haiku\n"
+                    "• Interactive permission support\n"
+                    "• Official Claude CLI",
                     parse_mode="Markdown"
                 )
                 return
@@ -333,7 +366,9 @@ class BasicCommands:
                 self.session_manager.set_agent_type(user_id, "opencode")
                 await update.message.reply_text(
                     "✅ **Agent set to OpenCode CLI**\n\n"
-                    "Uses OpenCode CLI for AI-powered code assistance.",
+                    "• Recomended model: GLM-4.7\n"
+                    "• Multi-provider support\n"
+                    "• Alternative to Claude CLI",
                     parse_mode="Markdown"
                 )
                 return
@@ -345,11 +380,15 @@ class BasicCommands:
                 )
                 return
 
+        # Check availability
+        claude_available = await self.orchestrator.check_claude_availability()
+        opencode_available = await self.orchestrator.check_opencode_availability()
+
         # Show agent selection with inline keyboard
         keyboard = []
         agents = {
-            "claude": "Claude Code CLI",
-            "opencode": "OpenCode CLI"
+            "claude": f"Claude Code {'✅' if claude_available else '❌'}",
+            "opencode": f"OpenCode {'✅' if opencode_available else '❌'}"
         }
 
         for agent_id, agent_name in agents.items():
@@ -362,10 +401,14 @@ class BasicCommands:
             f"🤖 *Select AI Agent*\n\n"
             f"Current: `{agents.get(current_agent, current_agent)}`\n\n"
             "*Claude Code CLI* (default):\n"
-            "→ Official Claude CLI with interactive permissions\n\n"
+            "• Models: sonnet, opus, haiku\n"
+            "• Official Claude CLI with permissions\n"
+            f"• Status: {'✅ Available' if claude_available else '❌ Unavailable'}\n\n"
             "*OpenCode CLI*:\n"
-            "→ OpenCode CLI with multi-provider support\n\n"
-            "Choose an agent:",
+            "• Recommended: GLM-4.7 (also supports glm-4)\n"
+            "• Multi-provider (GLM, DeepSeek, etc)\n"
+            f"• Status: {'✅ Available' if opencode_available else '❌ Unavailable'}\n\n"
+            "Choose an agent (unreachable CLIs auto-switch):",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )

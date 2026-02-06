@@ -104,12 +104,6 @@ class Orchestrator:
             logger.warning("No permission callback set, denying request")
             return False
         
-        # Generate request ID
-        request_id = str(uuid.uuid4())
-        
-        # Get current session (this is a simplified version - in practice, 
-        # we'd need to track which session is currently active)
-        # For now, we'll just call the callback without logging
         try:
             approved = await self.permission_callback(action_type, details)
             return approved
@@ -134,7 +128,7 @@ class Orchestrator:
             telegram_id: Telegram user ID
             chat_id: Telegram chat ID for permission requests
             output_callback: Optional callback for streaming output updates
-            force_openrouter: Force use of OpenRouter instead of Claude
+            force_openrouter: Force use of OpenRouter instead of CLI
             continue_conversation: Whether to continue previous conversation
             
         Returns:
@@ -184,149 +178,131 @@ class Orchestrator:
         
         logger.info(f"Executing command for user {telegram_id}, session {session.session_id}, agent_type: {session.agent_type}")
 
-        # specific fallback model if needed
-        fallback_model = None
-        env_override = None
+        # Check availability of all backends
+        claude_available = await self.check_claude_availability()
+        opencode_available = await self.check_opencode_availability()
+        openrouter_available = await self.check_openrouter_availability()
 
-        # Check if using Qwen model - configure OpenRouter env vars
-        if session.model.startswith("qwen/"):
-            openrouter_key = self.openrouter_handler.api_key if self.openrouter_handler else None
-            if openrouter_key:
+        # Determine which CLI to use based on availability and user selection
+        actual_agent_type = session.agent_type
+        selected_but_unavailable = False
+        note = ""
+
+        # If selected CLI is unavailable, switch to the available one
+        if actual_agent_type == "opencode" and not opencode_available:
+            if claude_available:
+                actual_agent_type = "claude"
+                selected_but_unavailable = True
+                note = "ℹ️ OpenCode CLI unavailable, using Claude Code CLI"
+                logger.warning(f"OpenCode unavailable, switching to Claude Code CLI")
+            elif openrouter_available:
+                actual_agent_type = "openrouter"
+                selected_but_unavailable = True
+                note = "ℹ️ OpenCode CLI unavailable, using OpenRouter"
+                logger.warning(f"OpenCode unavailable, switching to OpenRouter")
+
+        elif actual_agent_type == "claude" and not claude_available:
+            if opencode_available:
+                actual_agent_type = "opencode"
+                selected_but_unavailable = True
+                note = "ℹ️ Claude Code CLI unavailable, using OpenCode CLI"
+                logger.warning(f"Claude unavailable, switching to OpenCode CLI")
+            elif openrouter_available:
+                actual_agent_type = "openrouter"
+                selected_but_unavailable = True
+                note = "ℹ️ Claude Code CLI unavailable, using OpenRouter"
+                logger.warning(f"Claude unavailable, switching to OpenRouter")
+
+        # Model selection
+        from src.claude.session_manager import OPENCODE_DEFAULT_MODEL
+        model = session.model
+        
+        # Use appropriate default model based on actual agent type
+        if actual_agent_type == "opencode" and model in ["sonnet", "opus", "haiku"]:
+            model = OPENCODE_DEFAULT_MODEL
+        elif actual_agent_type == "claude" and model.startswith("glm"):
+            model = "sonnet"
+
+        # Env override for non-Claude models
+        env_override = None
+        if model.startswith("qwen/") or model.startswith("glm"):
+            if self.openrouter_handler:
                 env_override = {
                     "ANTHROPIC_BASE_URL": "https://openrouter.ai/api/v1",
-                    "ANTHROPIC_API_KEY": openrouter_key
+                    "ANTHROPIC_API_KEY": self.openrouter_handler.api_key
                 }
-                logger.info(f"Using Qwen model via OpenRouter: {session.model}")
-            else:
-                logger.warning("Qwen model selected but no OpenRouter API key configured")
 
-        # Use the selected agent type from session (unless forced to use OpenRouter)
-        if not force_openrouter:
-            agent_type = session.agent_type
+        # Execute using determined agent type
+        if actual_agent_type == "claude":
+            if session.bypass_mode:
+                logger.info(f"Using Claude Code CLI with pipes, model: {model}")
+                result = await self.claude_client.execute_with_pipes(
+                    instruction=instruction,
+                    work_dir=session.work_dir,
+                    output_callback=output_callback,
+                    model=model,
+                    continue_conversation=continue_conversation,
+                    env_override=env_override
+                )
+            else:
+                logger.info(f"Using Claude Code CLI with PTY, model: {model}")
+                result = await self.claude_client.execute_command(
+                    instruction=instruction,
+                    work_dir=session.work_dir,
+                    output_callback=output_callback,
+                    permission_context={"chat_id": chat_id},
+                    model=model,
+                    continue_conversation=continue_conversation,
+                    env_override=env_override
+                )
             
-            if agent_type == "claude":
-                claude_available = await self.check_claude_availability()
-                
-                if claude_available:
-                    # Check if bypass mode is enabled
-                    if session.bypass_mode:
-                        logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}, continue: {continue_conversation}")
-                        result = await self.claude_client.execute_with_pipes(
-                            instruction=instruction,
-                            work_dir=session.work_dir,
-                            output_callback=output_callback,
-                            model=session.model,
-                            continue_conversation=continue_conversation,
-                            env_override=env_override
-                        )
-                    else:
-                        logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}, continue: {continue_conversation}")
-                        result = await self.claude_client.execute_command(
-                            instruction=instruction,
-                            work_dir=session.work_dir,
-                            output_callback=output_callback,
-                            permission_context={"chat_id": chat_id},
-                            model=session.model,
-                            continue_conversation=continue_conversation,
-                            env_override=env_override
-                        )
-                    
-                    if result["success"]:
-                        return {
-                            **result,
-                            "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
-                            "session_id": session.session_id
-                        }
-                    else:
-                        # Check if error is quota-related
-                        error = result.get("error", "")
-                        output = result.get("output", "")
-                        combined_text = (error + " " + output).lower()
-                        
-                        limit_keywords = [
-                            "quota", 
-                            "rate limit", 
-                            "usage limit", 
-                            "hit your limit", 
-                            "resets",
-                            "credits"
-                        ]
-                        
-                        if any(keyword in combined_text for keyword in limit_keywords):
-                            logger.warning("Claude Code quota exceeded, falling back to OpenRouter (Qwen)")
-                            force_openrouter = True
-                            fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
-                        else:
-                            return {
-                                **result,
-                                "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
-                                "session_id": session.session_id
-                            }
-                else:
-                    logger.warning("Claude Code CLI unavailable, trying OpenRouter fallback")
-                    force_openrouter = True
+            return {
+                **result,
+                "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
+                "session_id": session.session_id,
+                "note": note
+            }
+
+        elif actual_agent_type == "opencode":
+            logger.info(f"Using OpenCode CLI, model: {model}")
+            result = await self.opencode_client.execute_command(
+                instruction=instruction,
+                work_dir=session.work_dir,
+                output_callback=output_callback,
+                permission_context={"chat_id": chat_id},
+                model=model,
+                continue_conversation=continue_conversation,
+                env_override=env_override
+            )
             
-            elif agent_type == "opencode":
-                opencode_available = await self.check_opencode_availability()
-                
-                if opencode_available:
-                    logger.info(f"Using OpenCode CLI, model: {session.model}, continue: {continue_conversation}")
-                    result = await self.opencode_client.execute_command(
-                        instruction=instruction,
-                        work_dir=session.work_dir,
-                        output_callback=output_callback,
-                        permission_context={"chat_id": chat_id},
-                        model=session.model,
-                        continue_conversation=continue_conversation,
-                        env_override=env_override
-                    )
-                    
-                    if result["success"]:
-                        return {
-                            **result,
-                            "backend": "opencode",
-                            "session_id": session.session_id
-                        }
-                    else:
-                        return {
-                            **result,
-                            "backend": "opencode",
-                            "session_id": session.session_id
-                        }
-                else:
-                    logger.warning("OpenCode CLI unavailable, trying OpenRouter fallback")
-                    force_openrouter = True
-        
-        # Fallback to OpenRouter
-        if force_openrouter:
-            if not self.openrouter_handler:
-                return {
-                    "success": False,
-                    "output": "",
-                    "error": "Selected CLI unavailable and OpenRouter not configured",
-                    "backend": "none"
-                }
-            
-            openrouter_available = await self.check_openrouter_availability()
+            return {
+                **result,
+                "backend": "opencode",
+                "session_id": session.session_id,
+                "note": note
+            }
+
+        elif actual_agent_type == "openrouter":
             if not openrouter_available:
                 return {
                     "success": False,
                     "output": "",
-                    "error": "Both selected CLI and OpenRouter are unavailable",
+                    "error": "No AI backend available",
                     "backend": "none"
                 }
             
-            logger.info(f"Using OpenRouter API ({fallback_model or 'default'})")
+            logger.info(f"Using OpenRouter API, model: {model}")
             result = await self.openrouter_handler.execute_instruction(
                 instruction=instruction,
-                model=fallback_model,
+                model=model,
                 system_prompt="You are a helpful AI coding assistant. Provide clear, concise responses."
             )
             
             return {
                 **result,
                 "backend": "openrouter",
-                "session_id": session.session_id
+                "session_id": session.session_id,
+                "note": note
             }
         
         return {
