@@ -1,4 +1,3 @@
-
 import logging
 import asyncio
 from telegram.ext import Application, CommandHandler as TelegramCommandHandler, MessageHandler as TelegramMessageHandler, CallbackQueryHandler, filters, TypeHandler, ApplicationHandlerStop
@@ -24,6 +23,7 @@ BOT_COMMANDS = [
     BotCommand("stop", "Stop running agent"),
     BotCommand("new", "Start fresh conversation"),
     BotCommand("model", "Select Claude model"),
+    BotCommand("agents", "Select AI agent (Claude/OpenCode)"),
     BotCommand("bypass", "Toggle bypass mode"),
     BotCommand("browse", "Browse working directory"),
     BotCommand("session", "Manage session"),
@@ -44,7 +44,8 @@ class AgenticGramBot:
         self.orchestrator = Orchestrator(
             session_manager=self.session_manager,
             openrouter_api_key=config.get("OPENROUTER_API_KEY"),
-            claude_code_path=config.get("CLAUDE_CODE_PATH")
+            claude_code_path=config.get("CLAUDE_CODE_PATH"),
+            opencode_path=config.get("OPENCODE_PATH")
         )
         
         self.directory_browser = DirectoryBrowser(
@@ -96,6 +97,7 @@ class AgenticGramBot:
         self.app.add_handler(TelegramCommandHandler("status", self.basic_commands.status))
         self.app.add_handler(TelegramCommandHandler("bypass", self.basic_commands.bypass))
         self.app.add_handler(TelegramCommandHandler("model", self.basic_commands.model))
+        self.app.add_handler(TelegramCommandHandler("agents", self.basic_commands.agents))
         self.app.add_handler(TelegramCommandHandler("new", self.basic_commands.new_conversation))
         self.app.add_handler(TelegramCommandHandler("stop", self.basic_commands.stop))
 
@@ -129,6 +131,8 @@ class AgenticGramBot:
             await self.permission_handler.handle_callback(update, context)
         elif data.startswith("model_"):
             await self.basic_commands.handle_model_callback(update, context)
+        elif data.startswith("agent_"):
+            await self.basic_commands.handle_agents_callback(update, context)
         else:
             await query.answer()
             logger.warning(f"Unknown callback data: {data}")

@@ -288,7 +288,7 @@ class BasicCommands:
 
             await query.edit_message_text(
                 f"✅ **Model set to: {model_id}**\n\n{model_desc}",
-                parse_mode="Markdown"
+parse_mode="Markdown"
             )
             logger.info(f"User {user_id} selected model: {model_id}")
 
@@ -310,3 +310,95 @@ class BasicCommands:
         )
 
         logger.info(f"User {user_id} started new conversation")
+
+    async def agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /agents command - select AI agent (Claude Code or OpenCode)."""
+        if not await self.auth.check_auth(update, context):
+            return
+
+        user_id = update.effective_user.id
+
+        # Get current agent type
+        current_agent = self.session_manager.get_agent_type(user_id)
+
+        # If agent specified as argument, set it directly
+        if context.args:
+            agent_arg = context.args[0].lower()
+
+            if agent_arg in ["claude", "claude-code"]:
+                self.session_manager.set_agent_type(user_id, "claude")
+                await update.message.reply_text(
+                    "✅ **Agent set to Claude Code CLI**\n\n"
+                    "Uses Claude's official CLI with interactive permission support.",
+                    parse_mode="Markdown"
+                )
+                return
+            elif agent_arg in ["opencode", "open-code"]:
+                self.session_manager.set_agent_type(user_id, "opencode")
+                await update.message.reply_text(
+                    "✅ **Agent set to OpenCode CLI**\n\n"
+                    "Uses OpenCode CLI for AI-powered code assistance.",
+                    parse_mode="Markdown"
+                )
+                return
+            else:
+                await update.message.reply_text(
+                    f"❌ Invalid agent: {agent_arg}\n\n"
+                    "Use: /agents [claude|opencode]",
+                    parse_mode="Markdown"
+                )
+                return
+
+        # Show agent selection with inline keyboard
+        keyboard = []
+        agents = {
+            "claude": "Claude Code CLI",
+            "opencode": "OpenCode CLI"
+        }
+
+        for agent_id, agent_name in agents.items():
+            label = f"{'✓ ' if agent_id == current_agent else ''}{agent_name}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"agent_{agent_id}")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(
+            f"🤖 *Select AI Agent*\n\n"
+            f"Current: `{agents.get(current_agent, current_agent)}`\n\n"
+            "*Claude Code CLI* (default):\n"
+            "→ Official Claude CLI with interactive permissions\n\n"
+            "*OpenCode CLI*:\n"
+            "→ OpenCode CLI with multi-provider support\n\n"
+            "Choose an agent:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+
+    async def handle_agents_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle agent selection callback."""
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+        agent_id = query.data.replace("agent_", "")
+
+        agent_names = {
+            "claude": "Claude Code CLI",
+            "opencode": "OpenCode CLI"
+        }
+
+        if agent_id in agent_names:
+            self.session_manager.set_agent_type(user_id, agent_id)
+            agent_name = agent_names[agent_id]
+
+            await query.edit_message_text(
+                f"✅ **Agent set to: {agent_name}**\n\n"
+                f"Using {agent_id} CLI for AI assistance.",
+                parse_mode="Markdown"
+            )
+            logger.info(f"User {user_id} selected agent: {agent_id}")
+        else:
+            await query.edit_message_text(
+                f"❌ Invalid agent selected",
+                parse_mode="Markdown"
+            )

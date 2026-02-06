@@ -1,6 +1,6 @@
 """
 Orchestrator for AgenticGram.
-Manages command routing between Claude Code and OpenRouter.
+Manages command routing between Claude Code, OpenCode, and OpenRouter.
 """
 
 import logging
@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
 from src.claude.claude_client import ClaudeClient
+from src.opencode_client import OpenCodeClient
 from .openrouter_handler import OpenRouterHandler
 from src.claude.session_manager import SessionManager, PermissionRequest
 
@@ -24,7 +25,8 @@ class Orchestrator:
         self,
         session_manager: SessionManager,
         openrouter_api_key: Optional[str] = None,
-        claude_code_path: Optional[str] = None
+        claude_code_path: Optional[str] = None,
+        opencode_path: Optional[str] = None
     ):
         """
         Initialize orchestrator.
@@ -33,17 +35,20 @@ class Orchestrator:
             session_manager: SessionManager instance
             openrouter_api_key: Optional OpenRouter API key for fallback
             claude_code_path: Optional custom path to Claude CLI executable
+            opencode_path: Optional custom path to OpenCode CLI executable
         """
         self.session_manager = session_manager
         self.claude_client = ClaudeClient(claude_path=claude_code_path)
+        self.opencode_client = OpenCodeClient(opencode_path=opencode_path)
         self.openrouter_handler = OpenRouterHandler(openrouter_api_key) if openrouter_api_key else None
         self.permission_callback: Optional[Callable] = None
 
         # Track active executions per user for cancellation
         self._active_tasks: Dict[int, asyncio.Task] = {}
 
-        # Set up Claude handler permission callback
+        # Set up permission callbacks for both CLIs
         self.claude_client.set_permission_callback(self._permission_callback_wrapper)
+        self.opencode_client.set_permission_callback(self._permission_callback_wrapper)
     
     async def check_claude_availability(self) -> bool:
         """
@@ -53,6 +58,15 @@ class Orchestrator:
             True if available, False otherwise
         """
         return await self.claude_client.check_availability()
+    
+    async def check_opencode_availability(self) -> bool:
+        """
+        Check if OpenCode CLI is available.
+        
+        Returns:
+            True if available, False otherwise
+        """
+        return await self.opencode_client.check_availability()
     
     async def check_openrouter_availability(self) -> bool:
         """
@@ -121,6 +135,7 @@ class Orchestrator:
             chat_id: Telegram chat ID for permission requests
             output_callback: Optional callback for streaming output updates
             force_openrouter: Force use of OpenRouter instead of Claude
+            continue_conversation: Whether to continue previous conversation
             
         Returns:
             Dictionary with execution result
@@ -167,13 +182,13 @@ class Orchestrator:
         session.message_count += 1
         self.session_manager.update_session(session)
         
-        logger.info(f"Executing command for user {telegram_id}, session {session.session_id}")
+        logger.info(f"Executing command for user {telegram_id}, session {session.session_id}, agent_type: {session.agent_type}")
 
         # specific fallback model if needed
         fallback_model = None
+        env_override = None
 
         # Check if using Qwen model - configure OpenRouter env vars
-        env_override = None
         if session.model.startswith("qwen/"):
             openrouter_key = self.openrouter_handler.api_key if self.openrouter_handler else None
             if openrouter_key:
@@ -185,25 +200,78 @@ class Orchestrator:
             else:
                 logger.warning("Qwen model selected but no OpenRouter API key configured")
 
-        # Try Claude Code first (unless forced to use OpenRouter)
+        # Use the selected agent type from session (unless forced to use OpenRouter)
         if not force_openrouter:
-            claude_available = await self.check_claude_availability()
-
-            if claude_available:
-                # Check if bypass mode is enabled
-                if session.bypass_mode:
-                    logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}, continue: {continue_conversation}")
-                    result = await self.claude_client.execute_with_pipes(
-                        instruction=instruction,
-                        work_dir=session.work_dir,
-                        output_callback=output_callback,
-                        model=session.model,
-                        continue_conversation=continue_conversation,
-                        env_override=env_override
-                    )
+            agent_type = session.agent_type
+            
+            if agent_type == "claude":
+                claude_available = await self.check_claude_availability()
+                
+                if claude_available:
+                    # Check if bypass mode is enabled
+                    if session.bypass_mode:
+                        logger.info(f"Using Claude Code CLI with pipes (bypass mode), model: {session.model}, continue: {continue_conversation}")
+                        result = await self.claude_client.execute_with_pipes(
+                            instruction=instruction,
+                            work_dir=session.work_dir,
+                            output_callback=output_callback,
+                            model=session.model,
+                            continue_conversation=continue_conversation,
+                            env_override=env_override
+                        )
+                    else:
+                        logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}, continue: {continue_conversation}")
+                        result = await self.claude_client.execute_command(
+                            instruction=instruction,
+                            work_dir=session.work_dir,
+                            output_callback=output_callback,
+                            permission_context={"chat_id": chat_id},
+                            model=session.model,
+                            continue_conversation=continue_conversation,
+                            env_override=env_override
+                        )
+                    
+                    if result["success"]:
+                        return {
+                            **result,
+                            "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
+                            "session_id": session.session_id
+                        }
+                    else:
+                        # Check if error is quota-related
+                        error = result.get("error", "")
+                        output = result.get("output", "")
+                        combined_text = (error + " " + output).lower()
+                        
+                        limit_keywords = [
+                            "quota", 
+                            "rate limit", 
+                            "usage limit", 
+                            "hit your limit", 
+                            "resets",
+                            "credits"
+                        ]
+                        
+                        if any(keyword in combined_text for keyword in limit_keywords):
+                            logger.warning("Claude Code quota exceeded, falling back to OpenRouter (Qwen)")
+                            force_openrouter = True
+                            fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
+                        else:
+                            return {
+                                **result,
+                                "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
+                                "session_id": session.session_id
+                            }
                 else:
-                    logger.info(f"Using Claude Code CLI with PTY (interactive mode), model: {session.model}, continue: {continue_conversation}")
-                    result = await self.claude_client.execute_command(
+                    logger.warning("Claude Code CLI unavailable, trying OpenRouter fallback")
+                    force_openrouter = True
+            
+            elif agent_type == "opencode":
+                opencode_available = await self.check_opencode_availability()
+                
+                if opencode_available:
+                    logger.info(f"Using OpenCode CLI, model: {session.model}, continue: {continue_conversation}")
+                    result = await self.opencode_client.execute_command(
                         instruction=instruction,
                         work_dir=session.work_dir,
                         output_callback=output_callback,
@@ -212,48 +280,30 @@ class Orchestrator:
                         continue_conversation=continue_conversation,
                         env_override=env_override
                     )
-
-                # Check if we should fallback to OpenRouter
-                if result["success"]:
-                    return {
-                        **result,
-                        "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
-                        "session_id": session.session_id
-                    }
-                else:
-                    # Check if error is quota-related (in error OR output)
-                    error = result.get("error", "")
-                    output = result.get("output", "")
-                    combined_text = (error + " " + output).lower()
                     
-                    limit_keywords = [
-                        "quota", 
-                        "rate limit", 
-                        "usage limit", 
-                        "hit your limit", 
-                        "resets",
-                        "credits"
-                    ]
-                    
-                    if any(keyword in combined_text for keyword in limit_keywords):
-                        logger.warning("Claude Code quota exceeded, falling back to OpenRouter (Qwen)")
-                        force_openrouter = True
-                        fallback_model = "qwen/qwen-2.5-coder-32b-instruct"
-                    else:
-                        # Return Claude error
+                    if result["success"]:
                         return {
                             **result,
-                            "backend": "claude_code" + ("_bypass" if session.bypass_mode else "_pty"),
+                            "backend": "opencode",
                             "session_id": session.session_id
                         }
+                    else:
+                        return {
+                            **result,
+                            "backend": "opencode",
+                            "session_id": session.session_id
+                        }
+                else:
+                    logger.warning("OpenCode CLI unavailable, trying OpenRouter fallback")
+                    force_openrouter = True
         
         # Fallback to OpenRouter
-        if force_openrouter or not await self.check_claude_availability():
+        if force_openrouter:
             if not self.openrouter_handler:
                 return {
                     "success": False,
                     "output": "",
-                    "error": "Claude Code unavailable and OpenRouter not configured",
+                    "error": "Selected CLI unavailable and OpenRouter not configured",
                     "backend": "none"
                 }
             
@@ -262,7 +312,7 @@ class Orchestrator:
                 return {
                     "success": False,
                     "output": "",
-                    "error": "Both Claude Code and OpenRouter are unavailable",
+                    "error": "Both selected CLI and OpenRouter are unavailable",
                     "backend": "none"
                 }
             

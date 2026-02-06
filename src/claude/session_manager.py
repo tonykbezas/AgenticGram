@@ -37,6 +37,7 @@ class Session:
     message_count: int = 0
     bypass_mode: bool = False  # If True, use pipes with bypassPermissions
     model: str = "sonnet"  # Default model
+    agent_type: str = "claude"  # "claude" or "opencode"
 
     def to_dict(self) -> dict:
         """Convert session to dictionary."""
@@ -89,7 +90,8 @@ class SessionManager:
                     last_used TEXT NOT NULL,
                     message_count INTEGER DEFAULT 0,
                     bypass_mode INTEGER DEFAULT 0,
-                    model TEXT DEFAULT 'sonnet'
+                    model TEXT DEFAULT 'sonnet',
+                    agent_type TEXT DEFAULT 'claude'
                 )
             """)
 
@@ -102,6 +104,9 @@ class SessionManager:
             if 'model' not in columns:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN model TEXT DEFAULT 'sonnet'")
                 logger.info("Added model column to sessions table")
+            if 'agent_type' not in columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN agent_type TEXT DEFAULT 'claude'")
+                logger.info("Added agent_type column to sessions table")
             
             # Permission history table
             cursor.execute("""
@@ -149,8 +154,8 @@ class SessionManager:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO sessions
-                (telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model, agent_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session.telegram_id,
                 session.session_id,
@@ -159,7 +164,8 @@ class SessionManager:
                 session.last_used.isoformat(),
                 session.message_count,
                 int(session.bypass_mode),
-                session.model
+                session.model,
+                session.agent_type
             ))
             conn.commit()
 
@@ -226,7 +232,7 @@ class SessionManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model
+                SELECT telegram_id, session_id, work_dir, created_at, last_used, message_count, bypass_mode, model, agent_type
                 FROM sessions WHERE telegram_id = ?
             """, (telegram_id,))
 
@@ -240,7 +246,8 @@ class SessionManager:
                     last_used=datetime.fromisoformat(row[4]),
                     message_count=row[5],
                     bypass_mode=bool(row[6]) if row[6] is not None else False,
-                    model=row[7] if row[7] else "sonnet"
+                    model=row[7] if row[7] else "sonnet",
+                    agent_type=row[8] if row[8] else "claude"
                 )
 
         return None
@@ -256,7 +263,7 @@ class SessionManager:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE sessions
-                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?, bypass_mode = ?, model = ?
+                SET session_id = ?, work_dir = ?, last_used = ?, message_count = ?, bypass_mode = ?, model = ?, agent_type = ?
                 WHERE telegram_id = ?
             """, (
                 session.session_id,
@@ -265,6 +272,7 @@ class SessionManager:
                 session.message_count,
                 int(session.bypass_mode),
                 session.model,
+                session.agent_type,
                 session.telegram_id
             ))
             conn.commit()
@@ -369,7 +377,46 @@ class SessionManager:
         """
         session = self.get_session(telegram_id)
         return session.model if session else "sonnet"
-    
+
+    def set_agent_type(self, telegram_id: int, agent_type: str) -> bool:
+        """
+        Set the agent type for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+            agent_type: Agent type ("claude" or "opencode")
+
+        Returns:
+            True if successful, False if invalid agent type
+        """
+        if agent_type not in ["claude", "opencode"]:
+            logger.error(f"Invalid agent type: {agent_type}")
+            return False
+
+        session = self.get_session(telegram_id)
+        if not session:
+            session = self.create_session(telegram_id)
+
+        session.agent_type = agent_type
+        session.last_used = datetime.now()
+        self.update_session(session)
+
+        logger.info(f"Set agent type for user {telegram_id}: {agent_type}")
+        return True
+
+    def get_agent_type(self, telegram_id: int) -> str:
+        """
+        Get the current agent type for a user's session.
+
+        Args:
+            telegram_id: Telegram user ID
+
+        Returns:
+            Agent type ("claude" or "opencode")
+        """
+        session = self.get_session(telegram_id)
+        return session.agent_type if session else "claude"
+
     def log_permission_request(self, request: PermissionRequest) -> None:
         """
         Log a permission request to the database.
