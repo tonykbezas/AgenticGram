@@ -1,4 +1,3 @@
-
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -21,11 +20,12 @@ class BasicCommands:
         user_id = update.effective_user.id
         welcome_message = (
             "🤖 **Welcome to AgenticGram!**\n\n"
-            "I'm your AI coding assistant powered by Claude Code CLI.\n"
-            "Use your authenticated Claude account or OpenRouter models.\n\n"
+            "I'm your AI coding assistant powered by Claude Code CLI and OpenCode CLI.\n"
+            "Use your authenticated account or OpenRouter models.\n\n"
             "**Available Commands:**\n"
             "/code <instruction> - Execute an AI coding instruction\n"
-            "/model - Select AI model (Claude Pro or Qwen 3)\n"
+            "/agents - Select AI agent (Claude Code or OpenCode)\n"
+            "/model - Select AI model\n"
             "/bypass - Toggle bypass mode (clean output, no prompts)\n"
             "/browse - Browse and select working directory\n"
             "/session - Manage your session (new/clear/info)\n"
@@ -47,22 +47,16 @@ class BasicCommands:
             "**Commands:**\n"
             "• `/code <instruction>` - Execute coding instruction\n"
             "  Example: `/code Create a Python function to calculate fibonacci`\n\n"
-            "• `/model [name]` - Select AI model\n"
-            "  *Claude models* (use authenticated account):\n"
-            "    sonnet (balanced), opus (most capable), haiku (fastest)\n"
-            "  *Qwen 3 models* (via OpenRouter API):\n"
-            "    qwen/qwen3-max, qwen/qwen3-coder-next, qwen/qwen3-coder:free\n\n"
+            "• `/agents [claude|opencode]` - Select AI agent\n"
+            "  claude: Claude Code CLI (official)\n"
+            "  opencode: OpenCode CLI (multi-provider)\n\n"
+            "• `/model [name]` - Select AI model\n\n"
             "• `/bypass [on|off]` - Toggle bypass mode\n"
-            "  ON: Uses pipes with clean output, all permissions auto-approved\n"
-            "  OFF: Uses PTY with interactive permission prompts\n\n"
-            "• `/browse [path]` - Browse and select working directory\n"
-            "  Navigate through directories with inline buttons\n\n"
-            "• `/trust [directory]` - Trust a directory for Claude CLI\n"
-            "  Prevents permission prompts for the specified directory\n\n"
-            "• `/session new` - Start a new session\n"
-            "• `/session clear` - Clear current session\n"
-            "• `/session info` - Show session information\n\n"
-            "• `/status` - Check AI backend availability and current mode\n\n"
+            "  ON: Clean output, all permissions auto-approved\n"
+            "  OFF: Interactive permission prompts\n\n"
+            "• `/browse [path]` - Browse and select working directory\n\n"
+            "• `/session new/clear/info` - Manage session\n\n"
+            "• `/status` - Check AI backend availability\n\n"
             "**File Uploads:**\n"
             "Send me code files and I'll save them to your workspace.\n"
             "Supported: .py, .sql, .js, .txt, .json, .md"
@@ -143,7 +137,7 @@ class BasicCommands:
 
         await update.message.chat.send_action("typing")
 
-user_id = update.effective_user.id
+        user_id = update.effective_user.id
 
         # Check backend availability
         claude_available = await self.orchestrator.check_claude_availability()
@@ -188,7 +182,7 @@ user_id = update.effective_user.id
                     "Using pipes with `--permission-mode bypassPermissions`\n"
                     "• Clean output (no TUI artifacts)\n"
                     "• All permissions auto-approved\n"
-                    "• ⚠️ Claude can execute any action without confirmation",
+                    "• ⚠️ AI can execute any action without confirmation",
                     parse_mode="Markdown"
                 )
                 return
@@ -212,7 +206,7 @@ user_id = update.effective_user.id
                 "Using pipes with `--permission-mode bypassPermissions`\n"
                 "• Clean output (no TUI artifacts)\n"
                 "• All permissions auto-approved\n"
-                "• ⚠️ Claude can execute any action without confirmation\n\n"
+                "• ⚠️ AI can execute any action without confirmation\n\n"
                 "Use `/bypass off` to disable.",
                 parse_mode="Markdown"
             )
@@ -229,7 +223,7 @@ user_id = update.effective_user.id
         logger.info(f"User {user_id} toggled bypass mode to: {new_mode}")
 
     async def model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /model command - select Claude model."""
+        """Handle /model command - select AI model."""
         if not await self.auth.check_auth(update, context):
             return
 
@@ -252,7 +246,6 @@ user_id = update.effective_user.id
                 )
                 return
             else:
-                # Could be a full model name like claude-sonnet-4-5-20250929
                 self.session_manager.set_model(user_id, model_arg)
                 await update.message.reply_text(
                     f"✅ **Model set to:** `{model_arg}`\n\n"
@@ -264,7 +257,6 @@ user_id = update.effective_user.id
         # Show model selection with inline keyboard
         keyboard = []
         for model_id, model_desc in CLAUDE_MODELS.items():
-            # Mark current model
             label = f"{'✓ ' if model_id == current_model else ''}{model_id}"
             keyboard.append([InlineKeyboardButton(label, callback_data=f"model_{model_id}")])
 
@@ -273,10 +265,6 @@ user_id = update.effective_user.id
         await update.message.reply_text(
             f"🤖 *Select AI Model*\n\n"
             f"Current: `{current_model}`\n\n"
-            "*Claude models* (sonnet/opus/haiku):\n"
-            "→ Use authenticated Claude Code CLI account\n\n"
-            "*Qwen 3 models* (via OpenRouter):\n"
-            "→ Use OpenRouter API via Claude CLI\n\n"
             "Choose a model:",
             reply_markup=reply_markup,
             parse_mode="Markdown"
@@ -296,7 +284,7 @@ user_id = update.effective_user.id
 
             await query.edit_message_text(
                 f"✅ **Model set to: {model_id}**\n\n{model_desc}",
-parse_mode="Markdown"
+                parse_mode="Markdown"
             )
             logger.info(f"User {user_id} selected model: {model_id}")
 
